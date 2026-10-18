@@ -1,0 +1,20 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}Signed out · Kagaz{% endblock %}
+
+{% block card %}
+  {% if just_signed_out %}
+    <div class="status-icon ok"><svg class="icon"><use href="#i-check"/></svg></div>
+    <h1>You're signed out</h1>
+    {% if shared_device %}
+      <p class="lead">On a shared or cyber café computer, also delete any Kagaz files you downloaded, and empty the Recycle Bin.</p>
+    {% else %}
+      <p class="lead">See you soon.</p>
+    {% endif %}
+  {% else %}
+    <div class="status-icon warn"><svg class="icon"><use href="#i-clock"/></svg></div>
+    <h1>Please sign in again</h1>
+    <p class="lead">For your safety, Kagaz signs you out after some time without activity.</p>
+  {% endif %}
+  <p class="fine">To open Kagaz again, type <strong>WEB</strong> in your Kagaz chat on WhatsApp. You'll get a fresh sign-in link.</p>
+{% endblock %}

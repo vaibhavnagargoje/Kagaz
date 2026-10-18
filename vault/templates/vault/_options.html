@@ -1,0 +1,8 @@
+{# Hidden fields that carry the size/format the person asked for. Needs `options`. #}
+{% if options.target_kb %}<input type="hidden" name="target_kb" value="{{ options.target_kb }}">{% endif %}
+{% if options.fmt != "original" %}<input type="hidden" name="fmt" value="{{ options.fmt }}">{% endif %}
+{% if options.width and options.height %}
+  <input type="hidden" name="width" value="{{ options.width }}">
+  <input type="hidden" name="height" value="{{ options.height }}">
+{% endif %}
+{% if options.merge %}<input type="hidden" name="merge" value="1">{% endif %}

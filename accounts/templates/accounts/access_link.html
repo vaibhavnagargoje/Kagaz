@@ -1,0 +1,41 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}{% if mode == "enter" %}Enter PIN{% else %}Set PIN{% endif %} · Kagaz{% endblock %}
+
+{% block card %}
+  {% if mode == "enter" %}
+    <h1>Enter your PIN</h1>
+    <p class="lead">{% if purpose == "login" %}To open your Kagaz on this browser.{% else %}To open your protected document.{% endif %}</p>
+  {% elif mode == "change" %}
+    <h1>Change your PIN</h1>
+    <p class="lead">Enter your current PIN, then choose a new one.</p>
+  {% elif resetting %}
+    <h1>Create a new PIN</h1>
+    <p class="lead">Your PIN reset is ready. Your documents stay exactly as they are.</p>
+  {% else %}
+    <h1>Create your PIN</h1>
+    <p class="lead">You'll use it to open ID cards and bank papers, and to sign in on the web. Don't reuse your UPI or ATM PIN.</p>
+  {% endif %}
+
+  <form method="post" autocomplete="off">
+    {% csrf_token %}
+    {% for field in form %}
+      {% if field.widget_type == "checkbox" %}
+        <label class="check" for="{{ field.id_for_label }}">{{ field }}<span>{{ field.label }}</span></label>
+      {% else %}
+        <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+      {% endif %}
+      {{ field.errors }}
+    {% endfor %}
+    {{ form.non_field_errors }}
+    <button type="submit" class="btn block" style="margin-top:22px">{% if mode == "enter" %}Open Kagaz{% else %}Save PIN{% endif %}</button>
+  </form>
+{% endblock %}
+
+{% block foot %}
+  <p class="auth-foot">
+    This link works once and expires in a few minutes. Never share your PIN.
+    {% if mode != "set" %}<br>Forgot it? Type <strong>FORGOT PIN</strong> in your Kagaz chat on WhatsApp.{% endif %}
+  </p>
+{% endblock %}

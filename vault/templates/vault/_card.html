@@ -1,0 +1,26 @@
+{# One document attachment inside a chat bubble. Needs `card` (see vault.chat.card). #}
+<div class="doc-wrap" data-card data-name="{{ card.title }}" data-ids="{{ card.ids|join:',' }}"
+     {% if card.pair %}data-front="{{ card.front_id }}" data-back="{{ card.back_id }}"{% endif %}>
+  {% if card.open_url %}<a class="doc" href="{{ card.open_url }}" title="Open {{ card.title }}">{% else %}<div class="doc">{% endif %}
+    <span class="doc-badge tone-{{ card.tone }}">{% if card.pair %}<svg class="icon pair"><use href="#i-cards"/></svg>{% else %}<b>{{ card.kind }}</b>{% endif %}{% if card.sensitive %}<svg class="icon lock"><use href="#i-lock"/></svg>{% endif %}</span>
+    <span class="doc-body">
+      <span class="doc-title">{{ card.title }}</span>
+      <span class="doc-meta">{{ card.meta }}</span>
+    </span>
+  {% if card.open_url %}</a>{% else %}</div>{% endif %}
+  <div class="doc-actions">
+    <form method="post" action="{% url 'vault:download' %}" data-download>
+      {% csrf_token %}
+      {% for id in card.ids %}<input type="hidden" name="doc" value="{{ id }}">{% endfor %}
+      {% include "vault/_options.html" with options=card.options %}
+      <button type="submit" class="btn sm">
+        {% if card.locked %}
+          <svg class="icon sm"><use href="#i-lock"/></svg>Unlock to download
+        {% else %}
+          <svg class="icon sm"><use href="#i-download"/></svg>Download{% if card.options_label %} · {{ card.options_label }}{% endif %}
+        {% endif %}
+      </button>
+    </form>
+    <button type="button" class="btn sm ghost" data-options><svg class="icon sm"><use href="#i-sliders"/></svg>Options</button>
+  </div>
+</div>

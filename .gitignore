@@ -1,0 +1,13 @@
+# Secrets (.env.example is the empty template, safe to commit)
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local data (encrypted documents, collected static files)
+storage/
+staticfiles/

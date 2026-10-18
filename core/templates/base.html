@@ -1,0 +1,25 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#1d2b53" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161d31" media="(prefers-color-scheme: dark)">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Kagaz{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d2b53'/%3E%3Cpath d='M22 0h10v10z' fill='%23e8a33d'/%3E%3Ctext x='15' y='23' font-size='18' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3E%E0%A4%95%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{% static 'kagaz/kagaz.css' %}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% include "_icons.html" %}
+  {% if messages %}
+    <ul class="toasts" data-toasts>
+      {% for message in messages %}<li class="toast {{ message.tags }}" role="status">{{ message }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+  {% block body %}{% endblock %}
+  {% if member %}{% include "accounts/_pin_sheet.html" %}{% endif %}
+  <script src="{% static 'kagaz/app.js' %}" defer></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}{{ document.title }} · Kagaz{% endblock %}
+{% block body_class %}has-app{% endblock %}
+
+{% block body %}
+<div class="app">
+  <header class="app-header">
+    <a class="icon-btn" href="{% url 'vault:home' %}" aria-label="Back to chat" title="Back to chat"><svg class="icon"><use href="#i-back"/></svg></a>
+    <div class="who">
+      <strong>{{ document.title }}</strong>
+      <span>{{ document.get_category_display }}{% if document.side %} · {{ document.get_side_display|lower }}{% endif %} · saved {{ document.created_at|date:"j M Y" }}</span>
+    </div>
+    <div class="header-actions">
+      {% if document.is_sensitive %}
+        {% if unlocked %}
+          <span class="pill" title="ID documents are open for a few minutes"><svg class="icon xs"><use href="#i-unlock"/></svg> Open</span>
+        {% else %}
+          <a class="icon-btn" href="{{ unlock_url }}" data-pin aria-label="Enter PIN" title="Enter PIN"><svg class="icon"><use href="#i-lock"/></svg></a>
+        {% endif %}
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="viewer">
+    <section class="preview-pane">
+      {% if locked %}
+        <div class="locked">
+          <svg class="icon" style="width:34px;height:34px"><use href="#i-lock"/></svg>
+          <p>This is an ID or bank document.<br>Enter your PIN to see it.</p>
+          <a class="btn" href="{{ unlock_url }}" data-pin><svg class="icon sm"><use href="#i-lock"/></svg>Enter PIN</a>
+        </div>
+      {% elif can_preview %}
+        <img src="{% url 'vault:preview' document.pk %}" alt="Preview of {{ document.title }}">
+      {% else %}
+        <div class="locked"><svg class="icon" style="width:34px;height:34px"><use href="#i-file"/></svg><p>No preview for this kind of file.</p></div>
+      {% endif %}
+    </section>
+
+    {% if other_side %}
+      <section class="panel">
+        <p style="margin:0">Kept together with the <a href="{% url 'vault:document' other_side.pk %}">{{ other_side.side }} side</a>. Both sides download as one page.</p>
+      </section>
+    {% elif document.side == "front" or document.side == "back" %}
+      <section class="panel"><p class="muted" style="margin:0">If this card has another side, add it in the chat and I'll keep both together.</p></section>
+    {% endif %}
+
+    {% if document.needs_label or can_retry_reading %}
+      <section class="panel">
+        {% if document.status == "waiting_for_ai" %}
+          <h2>Not read yet</h2>
+          <p class="muted">My AI helper was busy. I'll read this again on my own, or you can try now.</p>
+        {% elif document.needs_label %}
+          <h2>What is this?</h2>
+          <p class="muted">I couldn't tell what kind of document this is. Choosing a type helps you find it later.</p>
+        {% endif %}
+        {% if document.needs_label %}
+          <form method="post" action="{% url 'vault:label' document.pk %}" class="row">
+            {% csrf_token %}
+            <select class="input" name="category" aria-label="Document type">
+              {% for value, label in label_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn">Save</button>
+          </form>
+        {% endif %}
+        {% if can_retry_reading %}
+          <form method="post" action="{% url 'vault:reread' document.pk %}" style="margin-top:12px">
+            {% csrf_token %}
+            <button type="submit" class="btn ghost"><svg class="icon sm"><use href="#i-refresh"/></svg>Try reading again</button>
+          </form>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if not locked %}
+      {% if details.summary or details.holder_name or details.issuer or details.issue_date or document.expiry_date %}
+        <section class="panel">
+          <h2>About</h2>
+          {% if details.summary %}<p>{{ details.summary }}</p>{% endif %}
+          <dl class="kv">
+            {% if details.holder_name %}<dt>Name</dt><dd>{{ details.holder_name }}</dd>{% endif %}
+            {% if details.issuer %}<dt>Issued by</dt><dd>{{ details.issuer }}</dd>{% endif %}
+            {% if details.issue_date %}<dt>Issued on</dt><dd>{{ details.issue_date }}</dd>{% endif %}
+            {% if document.expiry_date %}<dt>Valid until</dt><dd>{{ document.expiry_date|date:"j M Y" }}</dd>{% endif %}
+          </dl>
+        </section>
+      {% endif %}
+    {% endif %}
+
+    {% if fields %}
+      <section class="panel">
+        <h2>Details</h2>
+        <ul class="facts">
+          {% for row in fields %}
+            <li data-copy-scope>
+              <span class="label">{{ row.label }}</span>
+              {% if row.locked %}
+                <a class="btn sm ghost" href="{{ unlock_url }}" data-pin><svg class="icon sm"><use href="#i-lock"/></svg>Enter PIN</a>
+              {% else %}
+                <span class="value" data-copy-value>{{ row.value }}</span>
+                <button type="button" class="icon-btn" data-copy aria-label="Copy {{ row.label }}" title="Copy"><svg class="icon sm"><use href="#i-copy"/></svg><span class="sr-only">Copy</span></button>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    <section class="panel">
+      <h2>Download</h2>
+      {% if sides %}
+        <form method="post" action="{% url 'vault:download' %}" data-download style="margin-bottom:14px">
+          {% csrf_token %}
+          {% for side in sides %}<input type="hidden" name="doc" value="{{ side.pk }}">{% endfor %}
+          <input type="hidden" name="back" value="{{ request.path }}">
+          <button type="submit" class="btn"><svg class="icon sm"><use href="#i-cards"/></svg>Both sides on one page</button>
+        </form>
+        <p class="muted">Or just this side:</p>
+      {% endif %}
+      <form method="post" action="{% url 'vault:download' %}" data-download>
+        {% csrf_token %}
+        <input type="hidden" name="doc" value="{{ document.pk }}">
+        <input type="hidden" name="back" value="{{ request.path }}">
+        <label class="field-label" for="d-kb" style="margin-top:0">Size limit</label>
+        <div class="chips" style="margin:0 0 8px">
+          <button type="button" class="chip" data-fill="50">50 KB</button>
+          <button type="button" class="chip" data-fill="100">100 KB</button>
+          <button type="button" class="chip" data-fill="200">200 KB</button>
+          <button type="button" class="chip" data-fill="500">500 KB</button>
+        </div>
+        <input class="input" id="d-kb" name="target_kb" type="number" min="5" inputmode="numeric" placeholder="Any size, or type KB">
+        <fieldset style="border:0;padding:0;margin:0">
+          <legend class="field-label">Format</legend>
+          <div class="segmented">
+            <label><input type="radio" name="fmt" value="original" checked><span>Same as saved</span></label>
+            <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
+            <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
+          </div>
+        </fieldset>
+        <label class="field-label" for="d-w">Exact size in pixels <span class="muted">(photos, signatures)</span></label>
+        <div class="row">
+          <input class="input" id="d-w" name="width" type="number" min="16" inputmode="numeric" placeholder="Width">
+          <span class="muted">×</span>
+          <input class="input" name="height" type="number" min="16" inputmode="numeric" placeholder="Height" aria-label="Height">
+        </div>
+        <button type="submit" class="btn block" style="margin-top:16px">
+          <svg class="icon sm"><use href="#i-{% if locked %}lock{% else %}download{% endif %}"/></svg>{% if locked %}Unlock and download{% else %}Download{% endif %}
+        </button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <form method="post" action="{% url 'vault:delete' document.pk %}"
+            onsubmit="return confirm('Delete this document from Kagaz? This cannot be undone.')">
+        {% csrf_token %}
+        <button type="submit" class="btn danger"><svg class="icon sm"><use href="#i-trash"/></svg>Delete document</button>
+      </form>
+    </section>
+  </main>
+</div>
+{% endblock %}

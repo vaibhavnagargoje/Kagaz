@@ -1,0 +1,11 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}Locked · Kagaz{% endblock %}
+
+{% block card %}
+  <div class="status-icon warn"><svg class="icon"><use href="#i-lock"/></svg></div>
+  <h1>Too many wrong tries</h1>
+  <p class="lead">ID cards and bank papers are locked for {{ minutes }} minutes to keep them safe.</p>
+  <p class="fine">If this wasn't you, someone may have access to your WhatsApp. Check WhatsApp → Settings → Linked devices.</p>
+  <p class="fine">Forgot your PIN? Type <strong>FORGOT PIN</strong> in your Kagaz chat on WhatsApp.</p>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{# A centred card on the paper background: PIN pages and short status pages. #}
+
+{% block body_class %}auth{% endblock %}
+
+{% block body %}
+<div>
+  <main class="auth-card">
+    <div class="brand"><span class="mark" aria-hidden="true">क</span><span class="wordmark">Kagaz</span></div>
+    {% block card %}{% endblock %}
+  </main>
+  {% block foot %}{% endblock %}
+</div>
+{% endblock %}

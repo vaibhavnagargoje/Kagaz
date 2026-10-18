@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Kagaz{% endblock %}
+{% block body_class %}has-app{% endblock %}
+
+{% block body %}
+<div class="app" data-chat
+     data-send-url="{% url 'vault:send' %}" data-upload-url="{% url 'vault:upload' %}"
+     data-thread-url="{% url 'vault:thread' %}" data-max-upload="{{ max_upload_bytes }}" data-max-upload-mb="{{ max_upload_mb }}">
+
+  <header class="app-header">
+    <span class="mark" aria-hidden="true">क</span>
+    <div class="who">
+      <strong>Kagaz</strong>
+      <span>{% if unlocked %}ID documents unlocked for a few minutes{% else %}Your documents · encrypted for you{% endif %}</span>
+    </div>
+    <div class="header-actions">
+      {% if unlocked %}
+        <form method="post" action="{% url 'vault:lock' %}">
+          {% csrf_token %}
+          <button type="submit" class="pill" title="Lock ID documents now">
+            <svg class="icon xs"><use href="#i-unlock"/></svg> Lock
+          </button>
+        </form>
+      {% else %}
+        <a class="icon-btn" href="{% url 'accounts:unlock' %}?next=/vault/" data-pin aria-label="Unlock ID documents" title="Unlock ID documents">
+          <svg class="icon"><use href="#i-lock"/></svg>
+        </a>
+      {% endif %}
+      <details class="menu">
+        <summary class="icon-btn" aria-label="Menu" title="Menu"><svg class="icon"><use href="#i-more"/></svg></summary>
+        <div class="menu-list">
+          <button type="button" data-action="list" data-label="My documents">My documents</button>
+          <button type="button" data-attach>Add a document</button>
+          <button type="button" data-action="help" data-label="What can you do?">What can you do?</button>
+          <form method="post" action="{% url 'vault:clear' %}">{% csrf_token %}<button type="submit">Clear chat</button></form>
+          <a href="{% url 'core:privacy' %}">Privacy</a>
+          <form method="post" action="{% url 'accounts:sign_out' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <main class="thread" data-thread aria-live="polite" aria-label="Chat with Kagaz">
+    <p class="notice">
+      <svg class="icon"><use href="#i-lock"/></svg>
+      Your files are encrypted with a key that's unique to you. ID cards and bank papers open only after your PIN.
+    </p>
+    <p class="day">Today</p>
+
+    <div class="msg bot first">
+      <div class="bubble">
+        <span class="text">Hi{% if first_name %} {{ first_name }}{% endif %}! I'm Kagaz. Ask me for any document, like “12th marksheet under 100 KB” or “my 12th roll number”. Tap the paperclip to add a new one.</span>
+        <div class="chips">
+          <button type="button" class="chip" data-send="12th marksheet under 100 KB">12th marksheet under 100 KB</button>
+          <button type="button" class="chip" data-action="list" data-label="My documents">My documents</button>
+        </div>
+      </div>
+    </div>
+
+    <div data-entries>{% include "vault/_entries.html" %}</div>
+
+    <div class="msg bot first typing" data-typing hidden>
+      <div class="bubble" role="status" aria-label="Kagaz is typing"><i></i><i></i><i></i></div>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="suggest" aria-label="Suggestions">
+      {% for chip in suggestions %}
+        {% if chip.attach %}
+          <button type="button" class="chip" data-attach><svg class="icon xs"><use href="#i-clip"/></svg>{{ chip.label }}</button>
+        {% else %}
+          <button type="button" class="chip" data-action="{{ chip.action }}" {% if chip.doc %}data-doc="{{ chip.doc }}"{% endif %} data-label="{{ chip.label }}">{{ chip.label }}</button>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <form class="composer-row" method="post" action="{% url 'vault:send' %}" data-composer>
+      {% csrf_token %}
+      <button type="button" class="icon-btn attach" data-attach aria-label="Add a document" title="Add a document">
+        <svg class="icon"><use href="#i-clip"/></svg>
+      </button>
+      <label class="field">
+        <span class="sr-only">Message</span>
+        <textarea name="text" rows="1" placeholder="Ask for a document…" autocomplete="off" maxlength="1000" required></textarea>
+      </label>
+      <button type="submit" class="send" aria-label="Send"><svg class="icon"><use href="#i-send"/></svg></button>
+    </form>
+    <form method="post" action="{% url 'vault:upload' %}" enctype="multipart/form-data" data-upload>
+      {% csrf_token %}
+      <input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp" data-file hidden>
+      <noscript><input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp"><button type="submit">Upload</button></noscript>
+    </form>
+  </footer>
+</div>
+
+{% include "vault/_options_sheet.html" %}
+{% endblock %}

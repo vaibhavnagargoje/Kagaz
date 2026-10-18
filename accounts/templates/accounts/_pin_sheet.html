@@ -1,0 +1,17 @@
+{# The PIN pop-up for signed-in pages. Opened by any [data-pin] link (which, without JavaScript, goes to the full unlock page). #}
+<dialog class="sheet" id="pin-sheet" aria-labelledby="pin-title">
+  <form method="post" action="{% url 'accounts:unlock' %}" class="sheet-body" data-pin-form autocomplete="off">
+    {% csrf_token %}
+    <div class="sheet-icon"><svg class="icon"><use href="#i-lock"/></svg></div>
+    <h2 id="pin-title">Enter your PIN</h2>
+    <p class="muted">ID cards and bank papers open after your PIN, for {{ unlock_minutes|default:5 }} minutes.</p>
+    <input class="input pin-input" type="password" name="pin" inputmode="numeric" pattern="[0-9]*"
+           minlength="4" maxlength="6" aria-label="PIN" required>
+    <p class="form-error" data-pin-error role="alert"></p>
+    <div class="sheet-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn">Unlock</button>
+    </div>
+    <p class="fine">Forgot it? Type <strong>FORGOT PIN</strong> in your Kagaz chat on WhatsApp.</p>
+  </form>
+</dialog>

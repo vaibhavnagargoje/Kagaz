@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Kagaz · Your documents, one message away{% endblock %}
+{% block body_class %}site{% endblock %}
+
+{% block body %}
+<div class="site-top">
+  <nav class="site-nav">
+    <span class="mark" aria-hidden="true">क</span><span class="wordmark">Kagaz</span>
+  </nav>
+  <section class="hero">
+    <div class="hero-copy">
+      <h1>Your documents,<br>one message away.</h1>
+      <p>Send any certificate, marksheet or card to Kagaz on WhatsApp. When a form asks for it, just ask, and get it back in the size and format the form wants.</p>
+      <div class="cta">
+        <span class="btn"><svg class="icon sm"><use href="#i-whatsapp"/></svg>Coming soon on WhatsApp</span>
+      </div>
+      <p style="font-size:14px;margin-top:16px">Already using Kagaz? Type <strong>WEB</strong> in your Kagaz chat to open it here.</p>
+    </div>
+
+    <div class="phone" aria-hidden="true">
+      <div class="app-header">
+        <span class="mark">क</span>
+        <div class="who"><strong>Kagaz</strong><span>Your documents · encrypted for you</span></div>
+      </div>
+      <div class="thread">
+        <p class="day">Today</p>
+        <div class="msg me first"><div class="bubble"><span class="text">12th marksheet under 100 KB</span><span class="meta">9:41 AM<svg class="icon"><use href="#i-checks"/></svg></span><span class="clear"></span></div></div>
+        <div class="msg bot first"><div class="bubble">
+          <span class="text">Here's your CBSE Class 12 Marksheet.</span>
+          <div class="doc-wrap"><div class="doc"><span class="doc-badge tone-pdf"><b>PDF</b></span><span class="doc-body"><span class="doc-title">CBSE_Class_12_Marksheet.pdf</span><span class="doc-meta">PDF · 98 KB</span></span></div></div>
+          <span class="meta">9:41 AM</span><span class="clear"></span>
+        </div></div>
+        <div class="msg me first"><div class="bubble"><span class="text">my 12th roll number?</span><span class="meta">9:42 AM<svg class="icon"><use href="#i-checks"/></svg></span><span class="clear"></span></div></div>
+        <div class="msg bot first"><div class="bubble">
+          <div class="answer"><div class="label">Roll number · CBSE Class 12 Marksheet</div><div class="value">7654321</div></div>
+          <span class="meta">9:42 AM</span><span class="clear"></span>
+        </div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="features">
+  <article class="feature">
+    <svg class="icon"><use href="#i-folder"/></svg>
+    <h3>Find it in seconds</h3>
+    <p>Ask in plain words, in English or Hinglish: “mera 10th ka marksheet bhejo”. No more digging through old chats.</p>
+  </article>
+  <article class="feature">
+    <svg class="icon"><use href="#i-sliders"/></svg>
+    <h3>Ready for any form</h3>
+    <p>Under 100 KB, PDF or JPG, exact photo pixels, both sides of a card on one page, or several files combined.</p>
+  </article>
+  <article class="feature">
+    <svg class="icon"><use href="#i-shield"/></svg>
+    <h3>Private by design</h3>
+    <p>Every file is encrypted with a key unique to you. ID cards and bank papers open only after your PIN.</p>
+  </article>
+</section>
+
+<footer class="site-foot">
+  <a href="{% url 'core:privacy' %}">Privacy policy</a>
+</footer>
+{% endblock %}

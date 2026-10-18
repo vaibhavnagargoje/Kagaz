@@ -1,0 +1,99 @@
+{% for entry in entries %}
+<div class="msg {{ entry.who }}{% if entry.first %} first{% endif %} new">
+  <div class="bubble">
+    {% if entry.type == "text" or entry.type == "needs_pin" %}
+      <span class="text">{{ entry.text }}</span>
+      {% if entry.type == "needs_pin" %}
+        <div class="chips">
+          <a class="chip" href="{% url 'accounts:unlock' %}?next=/vault/" data-pin><svg class="icon xs"><use href="#i-lock"/></svg>Enter PIN</a>
+        </div>
+      {% endif %}
+
+    {% elif entry.type == "file" %}
+      <div class="doc">
+        <span class="doc-badge tone-file"><b>FILE</b></span>
+        <span class="doc-body"><span class="doc-title">{{ entry.name }}</span><span class="doc-meta">Uploaded</span></span>
+      </div>
+
+    {% elif entry.type == "docs" %}
+      <span class="text">{{ entry.intro }}</span>
+      {% for card in entry.cards %}{% include "vault/_card.html" %}{% endfor %}
+
+    {% elif entry.type == "field" %}
+      {% if entry.intro %}<span class="text">{{ entry.intro }}</span>{% endif %}
+      {% if entry.field %}
+        <div class="answer" data-copy-scope>
+          <div class="label">{{ entry.field.label }} · {{ entry.card.title }}</div>
+          {% if entry.locked %}
+            <p class="doc-lock"><svg class="icon xs"><use href="#i-lock"/></svg>Protected. It shows after your PIN.</p>
+            <a class="btn sm" href="{% url 'accounts:unlock' %}?next=/vault/" data-pin><svg class="icon sm"><use href="#i-lock"/></svg>Enter PIN to see it</a>
+          {% else %}
+            <div class="value" data-copy-value>{{ entry.field.value }}</div>
+            <button type="button" class="btn sm ghost" data-copy><svg class="icon sm"><use href="#i-copy"/></svg>Copy</button>
+          {% endif %}
+        </div>
+        <span class="text muted">Here's the document, so you can double-check:</span>
+      {% else %}
+        <span class="text">That detail isn't in this document anymore.</span>
+      {% endif %}
+      {% include "vault/_card.html" with card=entry.card %}
+
+    {% elif entry.type == "list" %}
+      <span class="lead">Your documents ({{ entry.documents|length }}{% if entry.limit %} of {{ entry.limit }}{% endif %})</span>
+      {% if entry.documents %}
+        <ul class="doc-list">
+          {% for document in entry.documents %}
+            <li>
+              <button type="button" data-action="show" data-doc="{{ document.pk }}" data-label="{{ document.list_label }}">
+                <span class="doc-badge tone-{% if document.mime_type == 'application/pdf' %}pdf{% else %}img{% endif %}"><b>{% if document.mime_type == 'application/pdf' %}PDF{% else %}IMG{% endif %}</b>{% if document.is_sensitive %}<svg class="icon lock"><use href="#i-lock"/></svg>{% endif %}</span>
+                <span class="doc-body">
+                  <span class="doc-title">{{ document.list_label }}</span>
+                  <span class="doc-meta">{{ document.get_category_display }} · saved {{ document.created_at|date:"j M Y" }}</span>
+                </span>
+              </button>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <span class="text">Nothing saved yet. Tap the paperclip to add your first document.</span>
+      {% endif %}
+
+    {% elif entry.type == "saved" %}
+      <span class="lead">{% if entry.duplicate %}Already saved{% else %}Saved{% endif %}</span>
+      {% include "vault/_card.html" with card=entry.card %}
+      {% if entry.lines %}
+        <ul class="lines">{% for line in entry.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if entry.ask_label %}
+        <span class="text">What is it? Choosing a type helps you find it later.</span>
+        <div class="chips">
+          {% for value, label in entry.label_choices %}
+            <button type="button" class="chip" data-action="label" data-doc="{{ entry.document.pk }}" data-value="{{ value }}" data-label="{{ label }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+    {% elif entry.type == "confirm_delete" %}
+      <span class="text">{% if entry.documents|length == 1 %}Delete “{{ entry.documents.0.list_label }}” from Kagaz?{% else %}Which one should I delete?{% endif %} This can't be undone.</span>
+      <div class="chips">
+        {% for document in entry.documents %}
+          <button type="button" class="chip" data-action="delete" data-doc="{{ document.pk }}" data-label="Delete {{ document.list_label }}"><svg class="icon xs"><use href="#i-trash"/></svg>Delete{% if entry.documents|length > 1 %} {{ document.list_label }}{% endif %}</button>
+        {% endfor %}
+        <button type="button" class="chip" data-action="cancel" data-label="Cancel">Cancel</button>
+      </div>
+
+    {% elif entry.type == "help" %}
+      <span class="text">I keep your documents safe and find them when you need them. Try asking:</span>
+      <div class="chips">
+        {% for example in entry.examples %}<button type="button" class="chip" data-send="{{ example }}">{{ example }}</button>{% endfor %}
+      </div>
+      <ul class="lines muted">
+        <li>Tap the paperclip to add a document.</li>
+        <li>ID cards and bank papers open only after your PIN.</li>
+      </ul>
+    {% endif %}
+    <span class="meta">{{ entry.time|time:"g:i A" }}{% if entry.who == "me" %}<svg class="icon" aria-label="Sent"><use href="#i-checks"/></svg>{% endif %}</span>
+    <span class="clear"></span>
+  </div>
+</div>
+{% endfor %}

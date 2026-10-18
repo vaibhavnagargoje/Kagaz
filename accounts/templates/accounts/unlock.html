@@ -1,0 +1,25 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}Enter PIN · Kagaz{% endblock %}
+
+{% block card %}
+  <h1>Enter your PIN</h1>
+  <p class="lead">ID cards and bank papers open after your PIN, for a few minutes.</p>
+  <form method="post" autocomplete="off">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next }}">
+    {% for field in form %}
+      <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {{ field.errors }}
+    {% endfor %}
+    <button type="submit" class="btn block" style="margin-top:22px">Unlock</button>
+  </form>
+{% endblock %}
+
+{% block foot %}
+  <p class="auth-foot">
+    <a href="{% url 'vault:home' %}">Back to your chat</a><br>
+    Forgot it? Type <strong>FORGOT PIN</strong> in your Kagaz chat on WhatsApp.
+  </p>
+{% endblock %}

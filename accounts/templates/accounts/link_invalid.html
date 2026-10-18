@@ -1,0 +1,16 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}Link expired · Kagaz{% endblock %}
+
+{% block card %}
+  <div class="status-icon warn"><svg class="icon"><use href="#i-clock"/></svg></div>
+  {% if reset_cancelled %}
+    <h1>This PIN reset isn't available</h1>
+    <p class="lead">It was cancelled, it isn't ready yet, or your PIN was already changed.</p>
+    <p class="fine">Type <strong>FORGOT PIN</strong> in your Kagaz chat on WhatsApp to check.</p>
+  {% else %}
+    <h1>This link has expired</h1>
+    <p class="lead">For your safety, Kagaz links work only once and only for a few minutes.</p>
+    <p class="fine">Go back to WhatsApp and ask again to get a new link.</p>
+  {% endif %}
+{% endblock %}

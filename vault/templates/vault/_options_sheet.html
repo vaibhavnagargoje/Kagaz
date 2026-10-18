@@ -1,0 +1,48 @@
+{# "Options" for a document card: size, format, exact pixels, and which side of a card. #}
+<dialog class="sheet" id="options-sheet" aria-labelledby="options-title">
+  <form method="post" action="{% url 'vault:download' %}" class="sheet-body" data-download data-options-form>
+    {% csrf_token %}
+    <h2 id="options-title">Download options</h2>
+    <p class="muted" data-options-name></p>
+    <div data-options-docs></div>
+
+    <fieldset data-sides hidden>
+      <legend class="field-label">Sides</legend>
+      <div class="segmented">
+        <label><input type="radio" name="sides" value="both" checked><span>Both, one page</span></label>
+        <label><input type="radio" name="sides" value="front"><span>Front</span></label>
+        <label><input type="radio" name="sides" value="back"><span>Back</span></label>
+      </div>
+    </fieldset>
+
+    <label class="field-label" for="opt-kb">Size limit</label>
+    <div class="chips" style="margin:0 0 8px">
+      <button type="button" class="chip" data-fill="50">50 KB</button>
+      <button type="button" class="chip" data-fill="100">100 KB</button>
+      <button type="button" class="chip" data-fill="200">200 KB</button>
+      <button type="button" class="chip" data-fill="500">500 KB</button>
+    </div>
+    <input class="input" id="opt-kb" name="target_kb" type="number" min="5" max="100000" inputmode="numeric" placeholder="Any size, or type KB">
+
+    <fieldset>
+      <legend class="field-label">Format</legend>
+      <div class="segmented">
+        <label><input type="radio" name="fmt" value="original" checked><span>Same as saved</span></label>
+        <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
+        <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
+      </div>
+    </fieldset>
+
+    <label class="field-label" for="opt-w">Exact size in pixels <span class="muted">(photos, signatures)</span></label>
+    <div class="row">
+      <input class="input" id="opt-w" name="width" type="number" min="16" max="5000" inputmode="numeric" placeholder="Width">
+      <span class="muted">×</span>
+      <input class="input" name="height" type="number" min="16" max="5000" inputmode="numeric" placeholder="Height" aria-label="Height">
+    </div>
+
+    <div class="sheet-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn"><svg class="icon sm"><use href="#i-download"/></svg>Download</button>
+    </div>
+  </form>
+</dialog>
