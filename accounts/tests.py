@@ -2,12 +2,14 @@ import re
 import time
 from datetime import timedelta
 
-from django.test import Client
+from django.core.cache import cache
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from accounts import sessions
-from accounts.models import AccessLink, Member
+from accounts.admin_login import ADMIN_LOGIN_MAX_FAILURES
+from accounts.models import AccessLink, Member, User
 from core.testing import KagazTestCase
 from vault.models import Document
 
@@ -206,3 +208,40 @@ class WebSessionTests(KagazTestCase):
         self.sign_in(member)
         response = self.client.post(reverse("accounts:unlock"), {"pin": "4826", "next": "https://evil.example/"})
         self.assertRedirects(response, reverse("vault:home"))
+
+
+ADMIN_PASSWORD = "a-long-admin-password"
+
+
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
+class AdminLoginTests(KagazTestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        User.objects.create_superuser("boss", password=ADMIN_PASSWORD)
+
+    def log_in(self, password):
+        return self.client.post(reverse("admin:login"), {
+            "username": "boss", "password": password, "next": reverse("admin:index"),
+        })
+
+    def test_login_page_is_served(self):
+        self.assertContains(self.client.get(reverse("admin:login")), "Kagaz admin")
+
+    def test_locked_after_too_many_wrong_passwords(self):
+        with self.assertLogs("accounts.admin_login", "WARNING"):
+            for _ in range(ADMIN_LOGIN_MAX_FAILURES):
+                self.assertEqual(self.log_in("wrong").status_code, 200)
+        response = self.log_in(ADMIN_PASSWORD)  # Even the right password is refused while locked.
+        self.assertEqual(response.status_code, 429)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_right_password_resets_the_count(self):
+        with self.assertLogs("accounts.admin_login", "WARNING"):
+            self.log_in("wrong")
+            self.assertRedirects(self.log_in(ADMIN_PASSWORD), reverse("admin:index"))
+            self.client.logout()
+            # Without the reset, this would reach the limit (1 + 4 wrong passwords).
+            for _ in range(ADMIN_LOGIN_MAX_FAILURES - 1):
+                self.log_in("wrong")
+        self.assertRedirects(self.log_in(ADMIN_PASSWORD), reverse("admin:index"))

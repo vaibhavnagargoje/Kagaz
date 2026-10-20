@@ -148,6 +148,16 @@ HUEY = {
 }
 if REDIS_URL:
     HUEY["url"] = REDIS_URL
+    # Short-lived counters (admin sign-in attempts), shared by every web process.
+    # Without Redis, Django keeps them in memory, which is fine locally.
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
+
+
+# --- Admin ------------------------------------------------------------------
+# On the server, set ADMIN_URL in .env to a random word so the admin isn't at
+# /admin/, where bots look. Wrong-password limit: accounts/admin_login.py.
+
+ADMIN_URL = (env("ADMIN_URL", default="") or "admin").strip("/")
 
 
 # --- Security ---------------------------------------------------------------

@@ -71,6 +71,7 @@ One `KEY=value` per line; put comments on their own line.
 | `AI_PROVIDER`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_MODEL` | Which AI reads documents |
 | `WHATSAPP_BACKEND` and `WHATSAPP_*` | `console` for the terminal chat; `cloud` plus Meta's values for real WhatsApp |
 | `CSRF_TRUSTED_ORIGINS`, `REDIS_URL` | Only for ngrok/production |
+| `ADMIN_URL` | Server only: a random word, so the admin lives at `/<word>/` instead of `/admin/` |
 
 ## Get a free Gemini API key
 
@@ -176,6 +177,8 @@ Django creates a temporary `test_<DB_NAME>` database and deletes it afterwards.
 - Web uploads stay in memory until encrypted; no unencrypted copy is written to disk.
 - PINs are hashed like passwords. There are 5 tries, then a 30-minute lock. PIN links are single-use,
   expire after 10 minutes, and only their hash is stored.
+- The admin sits at a secret address (`ADMIN_URL`). 5 wrong passwords from one address lock its sign-in
+  for 15 minutes, even if the next password is right.
 
 **Honest limits:** whoever controls the server and the master key can technically decrypt data, and
 WhatsApp (Meta) and the AI provider see documents in transit. Don't advertise "nobody can ever see
