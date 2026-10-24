@@ -105,6 +105,17 @@ class CloudClient:
             },
         })
 
+    def send_link_button(self, to: str, body: str, label: str, url: str):
+        """A message with one button that opens a web page (e.g. "Pay ₹49")."""
+        self._send(to, {
+            "type": "interactive",
+            "interactive": {
+                "type": "cta_url",
+                "body": {"text": clip(body, 1024)},
+                "action": {"name": "cta_url", "parameters": {"display_text": clip(label, 20), "url": url}},
+            },
+        })
+
     def send_document(self, to: str, data: bytes, mime: str, filename: str, caption: str = ""):
         # Always sent as a document: WhatsApp recompresses anything sent as a photo.
         media_id = self.upload_media(data, mime, filename)
@@ -190,6 +201,10 @@ class ConsoleClient:
             f"  [{n}] {title}{f': {desc}' if desc else ''}" for n, (_, title, desc) in enumerate(rows, 1)
         )
         self._show(f"{body}\n{choices}\n  (type /tap <number>)")
+
+    def send_link_button(self, to, body, label, url):
+        self.sent.append({"type": "link_button", "to": to, "body": body, "label": label, "url": url})
+        self._show(f"{body}\n  [{label}] → {url}")
 
     def send_document(self, to, data, mime, filename, caption=""):
         outbox = Path(settings.MEDIA_ROOT) / "outbox"

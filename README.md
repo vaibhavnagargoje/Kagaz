@@ -146,8 +146,10 @@ its webhook within a few seconds, so slow work is handed to a **job queue**:
 | Conversions | 5 a month, plus any bought in ₹19 packs of 10 | Unlimited |
 | Typed questions for the AI | 20 a day | 200 a day |
 
-- On WhatsApp: **PLUS** shows the buttons, a tap sends a Razorpay payment link (UPI or card), and
-  Plus switches on when Razorpay's webhook says it's paid. **PLAN** shows usage, **CODE SAVE20**
+- On WhatsApp: **PLUS** shows the buttons, and a tap sends a **Pay ₹…** button. It opens Kagaz's own
+  pay page (`/billing/pay/<id>/`, works for 1 hour), which opens Razorpay's checkout with Kagaz's
+  name and logo and the phone number filled in. Plus switches on as soon as the page confirms the
+  payment with Razorpay, or when Razorpay's `order.paid` webhook arrives. **PLAN** shows usage, **CODE SAVE20**
   applies a promo code, and **REFER** gives the member's invite code.
 - Over the question limit, Kagaz searches by name instead of asking the AI.
 - When Plus ends, the member is back on Free. Documents are never deleted; only new saves over 25
@@ -157,8 +159,8 @@ its webhook within a few seconds, so slow work is handed to a **job queue**:
   read-only list of payments. A member's plan end date and credits can be changed by hand (refunds,
   free grants); Plus with no end date never ends.
 - Razorpay setup: create API keys and a webhook to `https://<your domain>/billing/webhook/` with the
-  events `payment_link.paid`, `payment_link.expired` and `payment_link.cancelled`. Put the keys and
-  the webhook secret in `.env`. Try everything with test keys (`rzp_test_…`) first.
+  event `order.paid`. Put the keys and the webhook secret in `.env`. Try everything with test keys
+  (`rzp_test_…`) first.
 
 ## Connect real WhatsApp (later)
 

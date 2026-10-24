@@ -162,12 +162,17 @@ def friend_note(percent: int) -> str:
     return f"🎁 Friend's discount: {percent}% off your first purchase."
 
 
-def payment_link(payment) -> str:
+def pay_button(payment) -> str:
+    return f"Pay ₹{payment.amount}"
+
+
+def payment_request(payment) -> str:
+    """Sent with a "Pay ₹…" button that opens Razorpay's payment page."""
     was = f" ~₹{payment.list_price}~" if payment.discount else ""
     return (
-        f"💳 *{payment.product.name}*: ₹{payment.amount}{was}\n"
-        f"Pay here (UPI or card):\n{payment.link_url}\n\n"
-        "The link works for 1 hour. I'll message you here as soon as it's paid."
+        f"💳 *{payment.product.name}*: ₹{payment.amount}{was}\n\n"
+        "Tap the button to pay with any UPI app (Google Pay, PhonePe, Paytm…) or a card.\n\n"
+        "It works for 1 hour. I'll message you here as soon as it's paid."
     )
 
 

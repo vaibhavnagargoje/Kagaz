@@ -21,9 +21,14 @@ FRIEND = "918888888888"
 MINUTE = timedelta(minutes=1)
 
 
-def fake_link(**kwargs) -> dict:
-    """What Razorpay answers when a payment link is made."""
-    return {"id": f"plink_{uuid.uuid4().hex[:14]}", "short_url": "https://rzp.io/i/test", "status": "created"}
+def fake_order(**kwargs) -> dict:
+    """What Razorpay answers when an order is made."""
+    return {"id": f"order_{uuid.uuid4().hex[:14]}", "amount": kwargs["amount"] * 100, "status": "created"}
+
+
+def checkout_signature(order_id: str, payment_id: str) -> str:
+    """What Razorpay's checkout hands the pay page (signed with the test key secret)."""
+    return hmac.new(b"rzp-test-secret", f"{order_id}|{payment_id}".encode(), hashlib.sha256).hexdigest()
 
 
 class BillingTestCase(KagazTestCase):
@@ -36,20 +41,31 @@ class BillingTestCase(KagazTestCase):
         self.pack = Product.objects.get(code="conversions_10")
 
     def buy(self, member, product) -> Payment:
-        with mock.patch("billing.razorpay.create_payment_link", side_effect=fake_link), \
-                mock.patch("billing.razorpay.cancel_payment_link"), \
+        with mock.patch("billing.razorpay.create_order", side_effect=fake_order), \
                 self.captureOnCommitCallbacks(execute=True):
             return services.start_payment(member, product)
 
-    def event(self, payment, kind="payment_link.paid", paid=None) -> dict:
+    def event(self, payment, paid=None) -> dict:
         paid = payment.amount if paid is None else paid
-        return {"event": kind, "payload": {
-            "payment_link": {"entity": {
-                "id": payment.razorpay_link_id, "reference_id": payment.pk.hex, "currency": "INR",
+        return {"event": "order.paid", "payload": {
+            "order": {"entity": {
+                "id": payment.razorpay_order_id, "receipt": payment.pk.hex, "currency": "INR",
                 "amount": payment.amount * 100, "amount_paid": paid * 100, "status": "paid",
             }},
-            "payment": {"entity": {"id": "pay_test123", "status": "captured", "captured": True}},
+            "payment": {"entity": {"id": "pay_test123", "status": "captured", "order_id": payment.razorpay_order_id}},
         }}
+
+    def report_checkout(self, payment, signature=None, status="captured"):
+        """The pay page posting what Razorpay's checkout gave it."""
+        razorpay_payment = {"id": "pay_test123", "status": status, "amount": payment.amount * 100,
+                            "order_id": payment.razorpay_order_id}
+        with mock.patch("billing.razorpay.fetch_payment", return_value=razorpay_payment), \
+                self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(reverse("billing:verify", args=[payment.pk]), {
+                "razorpay_order_id": payment.razorpay_order_id,
+                "razorpay_payment_id": "pay_test123",
+                "razorpay_signature": signature or checkout_signature(payment.razorpay_order_id, "pay_test123"),
+            })
 
     def post_event(self, event, signature=None):
         body = json.dumps(event).encode()
@@ -71,15 +87,14 @@ class BillingTestCase(KagazTestCase):
 
 
 class PaymentTests(BillingTestCase):
-    def test_payment_link_has_the_right_amount(self):
-        with mock.patch("billing.razorpay.create_payment_link", side_effect=fake_link) as create:
+    def test_order_has_the_right_amount(self):
+        with mock.patch("billing.razorpay.create_order", side_effect=fake_order) as create:
             payment = services.start_payment(self.member, self.year)
         sent = create.call_args.kwargs
         self.assertEqual(sent["amount"], 399)
-        self.assertEqual(sent["contact"], "+919999999999")
-        self.assertEqual(sent["reference_id"], payment.pk.hex)
+        self.assertEqual(sent["receipt"], payment.pk.hex)
         self.assertEqual(payment.status, Payment.Status.CREATED)
-        self.assertEqual(payment.link_url, "https://rzp.io/i/test")
+        self.assertTrue(payment.razorpay_order_id.startswith("order_"))
 
     def test_paid_webhook_switches_plus_on(self):
         payment = self.buy(self.member, self.year)
@@ -126,36 +141,73 @@ class PaymentTests(BillingTestCase):
         self.assertEqual(self.member.conversion_credits, 10)
         self.assertEqual(self.member.current_plan(), Member.Plan.FREE)
 
-    def test_expired_link(self):
-        payment = self.buy(self.member, self.year)
-        self.post_event(self.event(payment, kind="payment_link.expired"))
-        payment.refresh_from_db()
-        self.assertEqual(payment.status, Payment.Status.EXPIRED)
-
-    def test_new_link_replaces_the_open_one(self):
+    def test_new_payment_replaces_the_open_one(self):
         first = self.buy(self.member, self.year)
-        with mock.patch("billing.razorpay.create_payment_link", side_effect=fake_link), \
-                mock.patch("billing.razorpay.cancel_payment_link") as cancel:
-            services.start_payment(self.member, self.month)
-        cancel.assert_called_once_with(first.razorpay_link_id)
+        self.buy(self.member, self.month)
         first.refresh_from_db()
         self.assertEqual(first.status, Payment.Status.EXPIRED)
 
-    def test_paying_a_replaced_link_still_counts(self):
-        """If they pay the old link anyway, they get what they paid for."""
+    def test_paying_a_replaced_order_still_counts(self):
+        """If they pay the old one anyway, they get what they paid for."""
         first = self.buy(self.member, self.year)
         self.buy(self.member, self.month)
         self.post_event(self.event(first))
         first.refresh_from_db()
         self.assertEqual(first.status, Payment.Status.PAID)
 
-    def test_events_for_other_links_are_ignored(self):
-        response = self.post_event({"event": "payment_link.paid", "payload": {"payment_link": {"entity": {
-            "id": "plink_x", "reference_id": "not-ours"}}}})
+    def test_other_events_and_orders_are_ignored(self):
+        self.assertEqual(self.post_event({"event": "payment.authorized", "payload": {}}).status_code, 200)
+        response = self.post_event({"event": "order.paid", "payload": {"order": {"entity": {
+            "id": "order_x", "receipt": "not-ours"}}}})
         self.assertEqual(response.status_code, 200)
 
-    def test_thanks_page(self):
-        self.assertContains(self.client.get("/billing/thanks/"), "Thank you")
+
+class PayPageTests(BillingTestCase):
+    def test_pay_page_opens_razorpay_checkout_as_kagaz(self):
+        payment = self.buy(self.member, self.year)
+        response = self.client.get(reverse("billing:pay", args=[payment.pk]))
+        self.assertContains(response, "https://checkout.razorpay.com/v1/checkout.js")
+        self.assertContains(response, "Pay ₹399")
+        self.assertContains(response, "+91 •••••• 9999")
+        self.assertContains(response, 'id="checkout-options"')
+        options = response.context["checkout"]
+        self.assertEqual(options["order_id"], payment.razorpay_order_id)
+        self.assertEqual(options["name"], "Kagaz")
+        self.assertEqual(options["prefill"], {"contact": "+919999999999"})
+        self.assertEqual(options["amount"], 39900)
+
+    def test_checkout_result_switches_plus_on(self):
+        payment = self.buy(self.member, self.year)
+        response = self.report_checkout(payment)
+        self.assertEqual(response.json(), {"result": "paid"})
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.current_plan(), Member.Plan.PLUS)
+        self.assertIn("Payment received", self.last_text())
+        self.assertContains(self.client.get(reverse("billing:pay", args=[payment.pk])), "Paid, thank you!")
+
+    def test_checkout_result_with_a_bad_signature(self):
+        payment = self.buy(self.member, self.year)
+        with self.assertLogs("billing.services", "WARNING"):
+            response = self.report_checkout(payment, signature="deadbeef")
+        self.assertEqual(response.status_code, 400)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.current_plan(), Member.Plan.FREE)
+
+    def test_not_captured_yet_waits_for_the_webhook(self):
+        payment = self.buy(self.member, self.year)
+        self.assertEqual(self.report_checkout(payment, status="authorized").json(), {"result": "processing"})
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.current_plan(), Member.Plan.FREE)
+        self.post_event(self.event(payment))
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.current_plan(), Member.Plan.PLUS)
+
+    def test_pay_page_expires(self):
+        payment = self.buy(self.member, self.year)
+        Payment.objects.filter(pk=payment.pk).update(expires_at=timezone.now() - MINUTE)
+        response = self.client.get(reverse("billing:pay", args=[payment.pk]))
+        self.assertContains(response, "expired")
+        self.assertNotContains(response, "checkout.razorpay.com")
 
 
 class WhatsAppPlanTests(BillingTestCase):
@@ -171,14 +223,17 @@ class WhatsAppPlanTests(BillingTestCase):
         self.receive_text(self.member.wa_id, "renew")
         self.assertEqual([code for code, _ in self.sent("buttons")[-1]["buttons"]], ["buy:plus_year", "buy:plus_month"])
 
-    def test_tap_sends_the_payment_link(self):
-        with mock.patch("billing.razorpay.create_payment_link", side_effect=fake_link):
+    def test_tap_sends_a_pay_button(self):
+        with mock.patch("billing.razorpay.create_order", side_effect=fake_order):
             self.receive_tap(self.member.wa_id, "buy:plus_year")
-        self.assertIn("https://rzp.io/i/test", self.last_text())
-        self.assertIn("₹399", self.last_text())
+        payment = Payment.objects.get()
+        button = self.sent("link_button")[-1]
+        self.assertEqual(button["label"], "Pay ₹399")
+        self.assertEqual(button["url"], f"https://kagaz.test/billing/pay/{payment.pk}/")
+        self.assertIn("Kagaz Plus · 1 year", button["body"])
 
     def test_razorpay_down(self):
-        with mock.patch("billing.razorpay.create_payment_link", side_effect=RazorpayError("down")), \
+        with mock.patch("billing.razorpay.create_order", side_effect=RazorpayError("down")), \
                 self.assertLogs("bot.handlers", "ERROR"):
             self.receive_tap(self.member.wa_id, "buy:plus_year")
         self.assertEqual(self.last_text(), replies.PAYMENTS_DOWN)
@@ -218,7 +273,7 @@ class PromoCodeTests(BillingTestCase):
         self.receive_text(self.member.wa_id, "code NOPE")
         self.assertIn("couldn't find", self.last_text())
 
-    def test_first_n_uses_count_open_links(self):
+    def test_first_n_uses_count_open_payments(self):
         self.promo(max_uses=1)
         services.apply_code(self.member, "SAVE20")
         payment = self.buy(self.member, self.year)  # Unpaid, but holds the only use.
@@ -227,7 +282,7 @@ class PromoCodeTests(BillingTestCase):
         with self.assertRaisesMessage(services.PromoError, "used up"):
             services.apply_code(friend, "SAVE20")
 
-        self.post_event(self.event(payment, kind="payment_link.expired"))
+        Payment.objects.filter(pk=payment.pk).update(expires_at=timezone.now() - MINUTE)  # An hour later.
         services.apply_code(friend, "SAVE20")  # The use is free again.
 
     def test_once_per_member(self):
@@ -243,7 +298,7 @@ class PromoCodeTests(BillingTestCase):
     def test_free_purchase_needs_no_razorpay(self):
         self.promo(value=100)
         services.apply_code(self.member, "SAVE20")
-        with mock.patch("billing.razorpay.create_payment_link") as create:
+        with mock.patch("billing.razorpay.create_order") as create:
             self.receive_tap(self.member.wa_id, "buy:plus_month")
         create.assert_not_called()
         self.member.refresh_from_db()

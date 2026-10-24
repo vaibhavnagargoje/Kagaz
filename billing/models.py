@@ -131,9 +131,9 @@ class Payment(models.Model):
     amount = models.PositiveIntegerField("amount (₹)")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.CREATED)
     referrer_rewarded = models.BooleanField(default=False)
-    razorpay_link_id = models.CharField(max_length=40, blank=True, db_index=True)
+    razorpay_order_id = models.CharField(max_length=40, blank=True, db_index=True)
     razorpay_payment_id = models.CharField(max_length=40, blank=True)
-    link_url = models.URLField(blank=True)
+    # The pay page (/billing/pay/<id>/) stops offering to pay after this.
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)

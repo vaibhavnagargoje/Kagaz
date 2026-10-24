@@ -1,8 +1,10 @@
 """
 Buying Plus and conversion packs.
 
-    PLUS → buttons → start_payment() → Razorpay link on WhatsApp → person pays
-    → Razorpay webhook → handle_event() → mark_paid() → Plus or credits + message
+    PLUS → buttons → start_payment() (Razorpay order) → "Pay ₹…" button on WhatsApp
+    → our pay page (/billing/pay/<id>/) opens Razorpay's checkout → person pays
+    → confirm_checkout() right away, and the order.paid webhook as a backup
+    → mark_paid() → Plus or credits + message
 
 Prices come from the admin (billing.models). A member's price is the better of
 their promo code (typed with CODE) and their invited-friend discount; the two
@@ -28,8 +30,8 @@ from billing.models import Payment, Product, PromoCode, ReferralProgram
 
 logger = logging.getLogger(__name__)
 
-# A payment link works this long.
-LINK_HOURS = 1
+# The pay page offers to pay for this long.
+PAY_HOURS = 1
 # A code typed with CODE is kept this long for the next purchase.
 PROMO_KEEP_HOURS = 24
 # In the last days of a paid plan, the first chat of the day gets a renewal reminder.
@@ -169,24 +171,14 @@ def use_referral_code(member, text: str):
 # --- Paying -----------------------------------------------------------------
 
 
-def _cancel_open_links(member):
-    """A new link replaces the member's older unpaid ones, so they don't hold promo uses."""
-    open_payments = member.payments.filter(status=Payment.Status.CREATED)
-    for payment in open_payments:
-        if payment.razorpay_link_id:
-            try:
-                razorpay.cancel_payment_link(payment.razorpay_link_id)
-            except razorpay.RazorpayError:
-                logger.warning("Could not cancel payment link %s", payment.razorpay_link_id)
-    open_payments.update(status=Payment.Status.EXPIRED)
-
-
 def start_payment(member, product: Product) -> Payment:
-    """Make a payment and its Razorpay link. A free (100% off) purchase is switched on at once.
+    """Make a payment and its Razorpay order. A free (100% off) purchase is switched on at once.
 
     Raises razorpay.RazorpayError if Razorpay can't be reached.
     """
-    _cancel_open_links(member)
+    # A new payment replaces the member's older unpaid ones, so they don't hold promo uses.
+    # (If they pay an old one anyway, it still counts: see mark_paid.)
+    member.payments.filter(status=Payment.Status.CREATED).update(status=Payment.Status.EXPIRED)
     with transaction.atomic():
         promo = pending_promo(member)
         if promo:
@@ -196,28 +188,50 @@ def start_payment(member, product: Product) -> Payment:
         payment = Payment.objects.create(
             member=member, product=product, promo=offer.promo, referral_discount=offer.referral,
             list_price=product.price, discount=offer.discount, amount=offer.amount,
-            expires_at=timezone.now() + timedelta(hours=LINK_HOURS),
+            expires_at=timezone.now() + timedelta(hours=PAY_HOURS),
         )
     if payment.amount == 0:
         mark_paid(payment)
         payment.refresh_from_db()
         return payment
     try:
-        link = razorpay.create_payment_link(
-            amount=payment.amount,
-            reference_id=payment.pk.hex,
-            description=product.name,
-            contact=f"+{member.wa_id}",
-            expire_by=int(payment.expires_at.timestamp()),
-            callback_url=settings.PUBLIC_BASE_URL + reverse("billing:thanks"),
+        order = razorpay.create_order(
+            amount=payment.amount, receipt=payment.pk.hex,
             notes={"payment": str(payment.pk), "product": product.code},
         )
     except razorpay.RazorpayError:
         Payment.objects.filter(pk=payment.pk).update(status=Payment.Status.EXPIRED)
         raise
-    payment.razorpay_link_id, payment.link_url = link["id"], link["short_url"]
-    payment.save(update_fields=["razorpay_link_id", "link_url"])
+    payment.razorpay_order_id = order["id"]
+    payment.save(update_fields=["razorpay_order_id"])
     return payment
+
+
+def pay_url(payment: Payment) -> str:
+    return settings.PUBLIC_BASE_URL + reverse("billing:pay", args=[payment.pk])
+
+
+def confirm_checkout(payment: Payment, order_id: str, payment_id: str, signature: str) -> str:
+    """What our pay page reports after Razorpay's checkout: "paid", "processing" or "invalid".
+
+    The signature proves Razorpay sent it; Razorpay's API then confirms the money
+    was actually captured before anything is switched on.
+    """
+    if order_id != payment.razorpay_order_id or not razorpay.verify_checkout(order_id, payment_id, signature):
+        logger.warning("Payment %s: checkout result with a bad signature", payment.pk)
+        return "invalid"
+    try:
+        paid = razorpay.fetch_payment(payment_id)
+    except razorpay.RazorpayError:
+        logger.warning("Payment %s: could not check payment %s with Razorpay", payment.pk, payment_id)
+        return "processing"  # The order.paid webhook will finish it.
+    if paid.get("order_id") != order_id or paid.get("amount") != payment.amount * 100:
+        logger.error("Payment %s: Razorpay payment %s doesn't match the order", payment.pk, payment_id)
+        return "invalid"
+    if paid.get("status") != "captured":
+        return "processing"
+    mark_paid(payment, payment_id)
+    return "paid"
 
 
 def _give(member, plus_days: int = 0, conversions: int = 0):
@@ -296,28 +310,26 @@ def mark_paid(payment: Payment, razorpay_payment_id: str = "") -> bool:
 
 
 def handle_event(event: dict):
-    """A Razorpay webhook event (already signature-checked)."""
+    """A Razorpay webhook event (already signature-checked). Only order.paid matters."""
     kind = event.get("event", "")
-    link = event.get("payload", {}).get("payment_link", {}).get("entity", {})
+    if kind != "order.paid":
+        return
+    order = event.get("payload", {}).get("order", {}).get("entity", {})
     try:
-        payment_id = uuid.UUID(str(link.get("reference_id", "")))
+        payment_id = uuid.UUID(str(order.get("receipt", "")))
     except ValueError:
-        logger.info("Ignored Razorpay event %s with no Kagaz reference", kind)
+        logger.info("Ignored Razorpay order %s with no Kagaz receipt", order.get("id"))
         return
-    payment = Payment.objects.filter(pk=payment_id, razorpay_link_id=link.get("id") or "-").first()
+    payment = Payment.objects.filter(pk=payment_id, razorpay_order_id=order.get("id") or "-").first()
     if payment is None:
-        logger.warning("Razorpay event %s for an unknown payment link %s", kind, link.get("id"))
+        logger.warning("Razorpay order.paid for an unknown order %s", order.get("id"))
         return
-
-    if kind == "payment_link.paid":
-        if link.get("amount_paid") != payment.amount * 100 or link.get("currency", "INR") != "INR":
-            logger.error("Payment %s: Razorpay says %s paise were paid, expected %s", payment.pk,
-                         link.get("amount_paid"), payment.amount * 100)
-            return
-        paid = event["payload"].get("payment", {}).get("entity", {})
-        mark_paid(payment, paid.get("id", ""))
-    elif kind in ("payment_link.expired", "payment_link.cancelled"):
-        Payment.objects.filter(pk=payment.pk, status=Payment.Status.CREATED).update(status=Payment.Status.EXPIRED)
+    if order.get("amount_paid") != payment.amount * 100 or order.get("currency", "INR") != "INR":
+        logger.error("Payment %s: Razorpay says %s paise were paid, expected %s", payment.pk,
+                     order.get("amount_paid"), payment.amount * 100)
+        return
+    paid = event["payload"].get("payment", {}).get("entity", {})
+    mark_paid(payment, paid.get("id", ""))
 
 
 # --- Reminders --------------------------------------------------------------

@@ -1,0 +1,75 @@
+{% extends "accounts/auth_base.html" %}
+
+{% block title %}Pay · Kagaz{% endblock %}
+
+{% block card %}
+{% if state == "open" %}
+  <h1>{{ payment.product.name }}</h1>
+  <p class="pay-amount">₹{{ payment.amount }}{% if payment.discount %} <s>₹{{ payment.list_price }}</s>{% endif %}</p>
+  {% if payment.promo %}
+    <p class="fine">Code {{ payment.promo.code }} applied.</p>
+  {% elif payment.referral_discount %}
+    <p class="fine">Friend's discount applied.</p>
+  {% endif %}
+  {% if account %}<p class="lead">For your Kagaz account {{ account }}.</p>{% endif %}
+
+  <button type="button" class="btn block" id="pay-button">Pay ₹{{ payment.amount }}</button>
+  <p class="fine pay-status" id="pay-status" role="status"></p>
+  <p class="fine">Secure payment by Razorpay: any UPI app, cards or net banking.</p>
+
+  <form id="pay-verify" method="post" action="{{ verify_url }}" hidden>{% csrf_token %}</form>
+  {{ checkout|json_script:"checkout-options" }}
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script>
+    (function () {
+      var button = document.getElementById("pay-button");
+      var status = document.getElementById("pay-status");
+      var form = document.getElementById("pay-verify");
+      var WAIT = "Payment received. We'll message you on WhatsApp as soon as it's confirmed.";
+      if (typeof Razorpay === "undefined") {
+        status.textContent = "The payment window couldn't load. Check your internet and reload this page.";
+        button.disabled = true;
+        return;
+      }
+      var options = JSON.parse(document.getElementById("checkout-options").textContent);
+      options.handler = function (result) {
+        button.disabled = true;
+        status.textContent = "Payment received. Confirming…";
+        var data = new FormData(form);
+        data.append("razorpay_order_id", result.razorpay_order_id);
+        data.append("razorpay_payment_id", result.razorpay_payment_id);
+        data.append("razorpay_signature", result.razorpay_signature);
+        fetch(form.action, { method: "POST", body: data, credentials: "same-origin" })
+          .then(function (response) { return response.json(); })
+          .then(function (reply) {
+            if (reply.result === "paid") {
+              window.location.reload();
+            } else if (reply.result === "processing") {
+              status.textContent = WAIT;
+            } else {
+              status.textContent = "We couldn't confirm this payment. If money was taken, contact us and we'll fix it.";
+            }
+          })
+          .catch(function () { status.textContent = WAIT; });
+      };
+      options.modal = { ondismiss: function () { status.textContent = "Not paid yet. Tap the button when you're ready."; } };
+      var checkout = new Razorpay(options);
+      checkout.on("payment.failed", function () { status.textContent = "The payment didn't go through. You can try again."; });
+      button.addEventListener("click", function () { checkout.open(); });
+      checkout.open();
+    })();
+  </script>
+
+{% elif state == "paid" %}
+  <div class="status-icon ok"><svg class="icon"><use href="#i-check"/></svg></div>
+  <h1>Paid, thank you!</h1>
+  <p class="lead">{{ payment.product.name }} is active. Kagaz has sent you a confirmation on WhatsApp.</p>
+  <p class="fine">You can close this page and go back to WhatsApp.</p>
+
+{% else %}
+  <div class="status-icon warn"><svg class="icon"><use href="#i-clock"/></svg></div>
+  <h1>This payment page has expired</h1>
+  <p class="lead">For your safety, a payment page works for one hour.</p>
+  <p class="fine">Type <strong>PLUS</strong> in your Kagaz chat on WhatsApp to get a new one.</p>
+{% endif %}
+{% endblock %}

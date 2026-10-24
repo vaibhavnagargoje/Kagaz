@@ -428,6 +428,9 @@ body.auth {
 .status-icon.ok { background: rgba(47, 122, 91, .14); color: var(--ok); }
 .status-icon.warn { background: var(--notice-bg); color: var(--notice-text); }
 .status-icon .icon { width: 26px; height: 26px; }
+.pay-amount { font: 600 34px/1.2 var(--font-brand); margin: 4px 0 6px; }
+.pay-amount s { font-size: 20px; font-weight: 400; color: var(--muted); }
+.pay-status:empty { display: none; }
 
 /* --- Document viewer ------------------------------------------------------------- */
 

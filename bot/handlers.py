@@ -576,7 +576,9 @@ def _buy(member: Member, code: str):
         return
     # A free (100% off) purchase is already switched on, and mark_paid sent the confirmation.
     if payment.status != Payment.Status.PAID:
-        client.send_text(member.wa_id, replies.payment_link(payment))
+        client.send_link_button(
+            member.wa_id, replies.payment_request(payment), replies.pay_button(payment), billing.pay_url(payment)
+        )
 
 
 def _apply_code(member: Member, code: str):

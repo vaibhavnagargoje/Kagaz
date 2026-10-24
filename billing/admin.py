@@ -45,7 +45,7 @@ class PaymentAdmin(admin.ModelAdmin):
 
     list_display = ("created_at", "member", "product", "amount", "discount", "promo", "status", "paid_at")
     list_filter = ("status", "product", "promo")
-    search_fields = ("razorpay_link_id", "razorpay_payment_id")
+    search_fields = ("razorpay_order_id", "razorpay_payment_id")
 
     def has_add_permission(self, request):
         return False
