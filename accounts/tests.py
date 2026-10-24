@@ -2,8 +2,7 @@ import re
 import time
 from datetime import timedelta
 
-from django.core.cache import cache
-from django.test import Client, override_settings
+from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
@@ -213,11 +212,9 @@ class WebSessionTests(KagazTestCase):
 ADMIN_PASSWORD = "a-long-admin-password"
 
 
-@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
 class AdminLoginTests(KagazTestCase):
     def setUp(self):
         super().setUp()
-        cache.clear()
         User.objects.create_superuser("boss", password=ADMIN_PASSWORD)
 
     def log_in(self, password):

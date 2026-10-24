@@ -1,0 +1,22 @@
+{% extends "core/page.html" %}
+
+{% block title %}Contact · Kagaz{% endblock %}
+
+{% block article %}
+  <h1>Contact us</h1>
+  <p class="muted">Help with your account, payments or documents.</p>
+
+  <ul class="facts contact-facts">
+    <li><span class="label">Business</span><span class="value">{{ business.name }}</span></li>
+    {% if business.address %}<li><span class="label">Address</span><span class="value">{{ business.address }}</span></li>{% endif %}
+    {% if business.email %}<li><span class="label">Email</span><span class="value"><a href="mailto:{{ business.email }}">{{ business.email }}</a></span></li>{% endif %}
+    {% if business.phone %}<li><span class="label">Phone</span><span class="value"><a href="tel:{{ business.phone }}">{{ business.phone }}</a></span></li>{% endif %}
+    {% if business.whatsapp %}<li><span class="label">WhatsApp</span><span class="value"><a href="https://wa.me/{{ business.whatsapp }}">+{{ business.whatsapp }}</a></span></li>{% endif %}
+  </ul>
+
+  <h2>When we reply</h2>
+  <p>We reply within 2 working days. For a refund, include the WhatsApp number you used and the date of payment.</p>
+
+  <h2>Complaints about your personal data</h2>
+  <p>Write to us with "Privacy" in the subject, and we'll respond within the time India's data protection law requires. See our <a href="{% url 'core:privacy' %}">Privacy policy</a>.</p>
+{% endblock %}

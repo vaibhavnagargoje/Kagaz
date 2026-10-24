@@ -1,0 +1,46 @@
+{% extends "core/page.html" %}
+
+{% block title %}Terms & Conditions · Kagaz{% endblock %}
+
+{% block article %}
+{# Have a lawyer review this before a public launch. #}
+  <h1>Terms &amp; Conditions</h1>
+  <p class="muted">Last updated 24 October 2026</p>
+
+  <p>These terms are an agreement between you and {{ business.name }} ("we"), which runs Kagaz. By using Kagaz on WhatsApp or on this website, you agree to them.</p>
+
+  <h2>What Kagaz does</h2>
+  <p>Kagaz keeps the documents and photos you send it, finds them when you ask, reads details from them with an AI service, and converts them for online forms: to a size limit, to PDF or JPG, into one combined PDF, or to exact photo sizes.</p>
+
+  <h2>Your account</h2>
+  <p>Your account is your WhatsApp number. Anyone who can use your WhatsApp can use your Kagaz, so keep your phone locked. ID cards and bank papers open only on our website after your PIN. Never share your PIN with anyone, including us.</p>
+
+  <h2>What you may store</h2>
+  <p>Only documents you have the right to keep: your own, or your family's with their permission. Don't use Kagaz for anything illegal, for forged or altered documents, to harm or harass anyone, or to try to get into Kagaz or other people's accounts.</p>
+
+  <h2>Check before you submit</h2>
+  <p>Details read by the AI can be wrong. Kagaz always sends a detail together with its document so you can check it. You are responsible for what you submit in any form.</p>
+
+  <h2>Plans and payments</h2>
+  <p>The Free plan includes {{ free.documents }} documents, {{ free.conversions_per_month }} conversions a month and {{ free.questions_per_day }} typed questions a day. Kagaz Plus and conversion packs are one-time payments in Indian rupees, made through Razorpay by UPI or card. Prices are shown on <a href="{% url 'core:home' %}#pricing">our website</a> and in the chat before you pay.</p>
+  <p>Plus lasts for the period you bought and does not renew automatically. Conversion packs add conversions that don't expire. When Plus ends, you move back to the Free plan. Your documents are never deleted because a plan ended; you just can't add new ones while you are above the free limit.</p>
+  <p>Refunds are covered in our <a href="{% url 'core:refunds' %}">Refund &amp; Cancellation policy</a>.</p>
+
+  <h2>Your data</h2>
+  <p>How we handle your documents is described in our <a href="{% url 'core:privacy' %}">Privacy policy</a>. Type DELETE MY DATA on WhatsApp to erase everything at any time.</p>
+
+  <h2>Availability</h2>
+  <p>Kagaz depends on WhatsApp, Razorpay and AI services run by other companies. We work to keep it running, but we can't promise it will always be available or free of errors.</p>
+
+  <h2>Stopping</h2>
+  <p>You can stop using Kagaz at any time. We may block accounts that break these terms.</p>
+
+  <h2>Our responsibility</h2>
+  <p>As far as the law allows, we are not responsible for indirect losses, and our total responsibility to you is limited to what you paid us in the last 12 months.</p>
+
+  <h2>Changes and law</h2>
+  <p>We may update these terms; the date at the top shows the current version, and we'll mention important changes in the chat. These terms are governed by the laws of India.</p>
+
+  <h2>Contact</h2>
+  <p>Questions? Use our <a href="{% url 'core:contact' %}">contact page</a>.</p>
+{% endblock %}

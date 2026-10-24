@@ -1,0 +1,25 @@
+{% extends "core/page.html" %}
+
+{% block title %}Refund & Cancellation · Kagaz{% endblock %}
+
+{% block article %}
+  <h1>Refund &amp; Cancellation policy</h1>
+  <p class="muted">Last updated 24 October 2026</p>
+
+  <p>Kagaz Plus (monthly or yearly) and conversion packs are one-time payments. Nothing renews automatically, so there is no subscription to cancel.</p>
+
+  <h2>Refunds within 7 days</h2>
+  <p>If you're not happy, ask within 7 days of paying and we'll refund the full amount. Write to us{% if business.email %} at <a href="mailto:{{ business.email }}">{{ business.email }}</a>{% else %} through our <a href="{% url 'core:contact' %}">contact page</a>{% endif %} with the WhatsApp number you used and the date of payment. Your Plus or pack stops when the refund is made.</p>
+
+  <h2>Charged twice, or paid but nothing happened</h2>
+  <p>If you were charged more than once, or paid and your plan didn't start, contact us. We'll start your plan or refund the extra payment in full, whenever you tell us.</p>
+
+  <h2>After 7 days</h2>
+  <p>Payments can't be refunded after 7 days. Your Plus keeps working until its end date, and pack conversions stay available.</p>
+
+  <h2>How refunds are paid</h2>
+  <p>Refunds go back to the original payment method through Razorpay, usually within 5–7 working days after we approve them, depending on your bank.</p>
+
+  <h2>Stopping Kagaz</h2>
+  <p>To stop using Kagaz, just stop sending messages, or type DELETE MY DATA to erase everything. Deleting your data doesn't refund a payment by itself: ask within 7 days if you want one.</p>
+{% endblock %}

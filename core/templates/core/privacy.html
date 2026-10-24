@@ -1,21 +1,11 @@
-{% extends "base.html" %}
+{% extends "core/page.html" %}
 
 {% block title %}Privacy · Kagaz{% endblock %}
-{% block body_class %}site{% endblock %}
 
-{% block body %}
-{# DRAFT: have a lawyer review this against the DPDP Act before launch. #}
-<div class="site-top">
-  <nav class="site-nav">
-    <a href="{% url 'core:home' %}" style="display:flex;align-items:center;gap:10px;text-decoration:none">
-      <span class="mark" aria-hidden="true">क</span><span class="wordmark">Kagaz</span>
-    </a>
-  </nav>
-</div>
-
-<article class="article">
+{% block article %}
+{# Have a lawyer review this against the DPDP Act before a public launch. #}
   <h1>Privacy policy</h1>
-  <p class="muted">Draft · Last updated {% now "j F Y" %}</p>
+  <p class="muted">Last updated 24 October 2026</p>
 
   <h2>What we collect</h2>
   <p>Your WhatsApp number and profile name, the documents and photos you send us, and the details we read from them, such as names, document numbers and dates.</p>
@@ -27,12 +17,14 @@
   <p>Every file and its details are encrypted with a key unique to you. Our staff tools cannot open your documents. ID cards and bank papers are never sent inside WhatsApp: they open on a secure page after your PIN.</p>
 
   <h2>Who processes it</h2>
-  <p>Messages pass through WhatsApp (Meta). An AI provider reads each document once to name it and find its details. Files are stored with our cloud hosting provider.</p>
+  <p>Messages pass through WhatsApp (Meta). An AI provider reads each document once to name it and find its details. Files are stored with our cloud hosting provider. Payments are handled by Razorpay: we never see your card or UPI details.</p>
 
   <h2>Your rights</h2>
   <p>Type DELETE MY DATA on WhatsApp anytime to erase your documents, details and keys permanently. Contact us to see or correct what we hold.</p>
 
   <h2>How long we keep it</h2>
   <p>We keep your documents until you delete them. Message logs are deleted after 30 days, and web chats when you sign out.</p>
-</article>
+
+  <h2>Questions or complaints</h2>
+  <p>Write to us through our <a href="{% url 'core:contact' %}">contact page</a>{% if business.email %} or at <a href="mailto:{{ business.email }}">{{ business.email }}</a>{% endif %}, with "Privacy" in the subject.</p>
 {% endblock %}

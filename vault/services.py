@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.utils import timezone
 
 from accounts.models import Member
@@ -310,6 +311,12 @@ def prepare_files(member: Member, documents: list[Document], options: conversion
             files.extend(_file_data(d) for d in group)
     prepared = conversions.prepare(files, options)
     if prepared.operations:
+        if member.plan_conversions_left() == 0:
+            # This month's plan conversions are used up, so this one uses a pack credit.
+            if Member.objects.filter(pk=member.pk, conversion_credits__gt=0).update(
+                conversion_credits=F("conversion_credits") - 1
+            ):
+                member.conversion_credits -= 1
         Conversion.objects.create(
             member=member,
             operations=prepared.operations,

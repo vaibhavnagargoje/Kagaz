@@ -6,6 +6,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser
+from django.core.cache import cache
 from django.db import models
 from django.urls import reverse
 from django.utils import timezone
@@ -13,11 +14,12 @@ from django.utils import timezone
 from core import crypto
 from core.models import TimeStampedModel
 
-# What each plan allows. None means unlimited.
+# What each plan allows. None means unlimited. Typed questions are the ones the
+# AI has to understand; commands like LIST or HELP don't count.
 PLAN_LIMITS = {
-    "free": {"documents": 25, "conversions_per_month": 5},
-    "plus": {"documents": None, "conversions_per_month": None},
-    "family": {"documents": None, "conversions_per_month": None},
+    "free": {"documents": 25, "conversions_per_month": 5, "questions_per_day": 20},
+    "plus": {"documents": None, "conversions_per_month": None, "questions_per_day": 200},
+    "family": {"documents": None, "conversions_per_month": None, "questions_per_day": 200},
 }
 
 PIN_MAX_ATTEMPTS = 5
@@ -47,6 +49,19 @@ class Member(TimeStampedModel):
     wa_id = models.CharField("WhatsApp id", max_length=32, unique=True)
     display_name = models.CharField(max_length=120, blank=True)
     plan = models.CharField(max_length=16, choices=Plan.choices, default=Plan.FREE)
+    # A paid plan lasts until this time. A paid plan with no end date is a
+    # grant made by hand in the admin.
+    plan_expires_at = models.DateTimeField("plan ends", null=True, blank=True)
+    # Conversions bought in packs. Used after the plan's monthly ones; they never expire.
+    conversion_credits = models.PositiveIntegerField(default=0)
+    # This member's code for inviting friends (made the first time they ask), and who invited them.
+    referral_code = models.CharField(max_length=12, unique=True, null=True, blank=True, editable=False)
+    referred_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="referrals", editable=False
+    )
+    # A promo code typed with CODE, kept for the next purchase.
+    pending_promo_code = models.CharField(max_length=32, blank=True, editable=False)
+    pending_promo_set_at = models.DateTimeField(null=True, blank=True, editable=False)
     is_blocked = models.BooleanField(default=False)
     consent_given_at = models.DateTimeField(null=True, blank=True)
     last_active_at = models.DateTimeField(null=True, blank=True)
@@ -87,19 +102,45 @@ class Member(TimeStampedModel):
 
     # --- Plan limits ---
 
+    def current_plan(self) -> str:
+        """The plan in force now. A paid plan whose end date has passed counts as free."""
+        if self.plan != self.Plan.FREE and self.plan_expires_at and self.plan_expires_at <= timezone.now():
+            return self.Plan.FREE
+        return self.plan
+
     def limits(self) -> dict:
-        return PLAN_LIMITS[self.plan]
+        return PLAN_LIMITS[self.current_plan()]
 
     def can_add_document(self) -> bool:
         limit = self.limits()["documents"]
         return limit is None or self.documents.count() < limit
 
-    def can_convert(self) -> bool:
+    def conversions_this_month(self) -> int:
+        month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return self.conversions.filter(created_at__gte=month_start).count()
+
+    def plan_conversions_left(self) -> int | None:
+        """The plan's conversions left this month (None means unlimited). Pack credits come on top."""
         limit = self.limits()["conversions_per_month"]
         if limit is None:
-            return True
-        month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return self.conversions.filter(created_at__gte=month_start).count() < limit
+            return None
+        return max(0, limit - self.conversions_this_month())
+
+    def can_convert(self) -> bool:
+        left = self.plan_conversions_left()
+        return left is None or left > 0 or self.conversion_credits > 0
+
+    def _questions_key(self) -> str:
+        return f"ai-questions:{self.pk}:{timezone.localdate():%Y%m%d}"
+
+    def questions_used_today(self) -> int:
+        return cache.get(self._questions_key()) or 0
+
+    def use_question(self) -> bool:
+        """Count one typed question for the AI. False once today's limit is used up."""
+        key = self._questions_key()
+        cache.add(key, 0, 60 * 60 * 25)
+        return cache.incr(key) <= self.limits()["questions_per_day"]
 
     # --- PIN ---
 

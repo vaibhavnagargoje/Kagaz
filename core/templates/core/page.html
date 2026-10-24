@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{# A text page on the paper background: privacy, terms, refunds, contact. #}
+
+{% block body_class %}site{% endblock %}
+
+{% block body %}
+<div class="site-top">
+  <nav class="site-nav">
+    <a href="{% url 'core:home' %}" style="display:flex;align-items:center;gap:10px;text-decoration:none">
+      <span class="mark" aria-hidden="true">क</span><span class="wordmark">Kagaz</span>
+    </a>
+  </nav>
+</div>
+
+<article class="article">
+  {% block article %}{% endblock %}
+</article>
+
+{% include "core/_site_foot.html" %}
+{% endblock %}

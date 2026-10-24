@@ -13,6 +13,7 @@ urlpatterns = [
     path(f"{settings.ADMIN_URL}/", admin.site.urls),
     path("webhooks/", include("bot.urls")),
     path("vault/", include("vault.urls")),
+    path("billing/", include("billing.urls")),
     path("", include("accounts.urls")),
     path("", include("core.urls")),
 ]

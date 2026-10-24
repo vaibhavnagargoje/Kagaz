@@ -120,3 +120,30 @@ class MemberKeyTests(KagazTestCase):
         member.refresh_from_db()
         del member._data_key
         self.assertEqual(member.data_key(), key)
+
+
+@override_settings(
+    BUSINESS_NAME="Darkbasalt Labs", BUSINESS_ADDRESS="Karmala, Maharashtra", SUPPORT_EMAIL="hello@example.com",
+    WHATSAPP_DISPLAY_NUMBER="",
+)
+class SitePageTests(KagazTestCase):
+    def test_home_shows_prices_from_the_admin(self):
+        from billing.models import Product
+
+        Product.objects.filter(code="plus_year").update(price=349)
+        response = self.client.get("/")
+        self.assertContains(response, "₹349 <span>a year</span>", html=False)
+        self.assertContains(response, "₹49 <span>a month</span>", html=False)
+        self.assertContains(response, "10 conversions")
+        self.assertNotContains(response, "Coming soon")
+
+    def test_policy_pages(self):
+        for url, text in (
+            ("/terms/", "Terms &amp; Conditions"),
+            ("/refunds/", "Refunds within 7 days"),
+            ("/privacy/", "Privacy policy"),
+            ("/contact/", "Karmala, Maharashtra"),
+        ):
+            response = self.client.get(url)
+            self.assertContains(response, text, msg_prefix=url)
+            self.assertContains(response, "Darkbasalt Labs", msg_prefix=url)  # Footer, on every page.

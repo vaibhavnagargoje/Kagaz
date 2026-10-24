@@ -10,14 +10,22 @@ admin.site.register(User, UserAdmin)
 class MemberAdmin(admin.ModelAdmin):
     """Support view of members. Keys and PIN hashes are never shown."""
 
-    list_display = ("__str__", "display_name", "plan", "has_consented", "document_count", "last_active_at", "created_at")
-    list_filter = ("plan", "is_blocked")
-    search_fields = ("wa_id",)
-    fields = (
-        "wa_id", "display_name", "plan", "is_blocked", "consent_given_at", "last_active_at",
-        "pin_reset_ready_at", "created_at",
+    list_display = (
+        "__str__", "display_name", "plan", "plan_expires_at", "has_consented", "document_count", "last_active_at",
+        "created_at",
     )
-    readonly_fields = ("wa_id", "consent_given_at", "last_active_at", "pin_reset_ready_at", "created_at")
+    list_filter = ("plan", "is_blocked")
+    search_fields = ("wa_id", "referral_code")
+    # Plan, end date and credits are editable for refunds and free grants.
+    # Plus with an empty end date never ends.
+    fields = (
+        "wa_id", "display_name", "plan", "plan_expires_at", "conversion_credits", "referral_code", "referred_by",
+        "is_blocked", "consent_given_at", "last_active_at", "pin_reset_ready_at", "created_at",
+    )
+    readonly_fields = (
+        "wa_id", "referral_code", "referred_by", "consent_given_at", "last_active_at", "pin_reset_ready_at",
+        "created_at",
+    )
 
     @admin.display(boolean=True)
     def has_consented(self, member):

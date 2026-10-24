@@ -100,7 +100,7 @@ def upload(request):
     elif not member.can_add_document():
         answer = [chat.bot_text(
             f"Your free plan holds {member.limits()['documents']} documents and it's full. "
-            "Delete one you don't need to make room."
+            "Delete one you don't need to make room, or type PLUS on WhatsApp for unlimited storage."
         )]
     else:
         data = upload.read()
@@ -170,7 +170,10 @@ def download(request):
     options = chat.options_from(request.POST)
     if options.converts and not member.can_convert():
         limit = member.limits()["conversions_per_month"]
-        problem = f"You've used your {limit} free conversions this month. You can still download the original."
+        problem = (
+            f"You've used your {limit} free conversions this month. You can still download the original, "
+            "or type PLUS on WhatsApp for more."
+        )
         return _problem(request, problem, back, fetch)
     try:
         prepared = services.prepare_files(member, documents, options)

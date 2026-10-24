@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "accounts",
     "vault",
     "bot",
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -116,6 +117,11 @@ DATABASES = {
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Kagaz <noreply@localhost>")
 # Shown to users who need a person (WhatsApp requires a way to reach a human).
 SUPPORT_EMAIL = env("SUPPORT_EMAIL", default="")
+# The business behind Kagaz, shown on the Contact, Terms and Refund pages.
+# Use the name exactly as in your Razorpay KYC.
+BUSINESS_NAME = env("BUSINESS_NAME", default="") or "Kagaz"
+BUSINESS_ADDRESS = env("BUSINESS_ADDRESS", default="")
+SUPPORT_PHONE = env("SUPPORT_PHONE", default="")
 
 if env("EMAIL_HOST_USER", default=""):
     MAILERS = {
@@ -210,3 +216,12 @@ WHATSAPP_ACCESS_TOKEN = env("WHATSAPP_ACCESS_TOKEN", default="")
 WHATSAPP_PHONE_NUMBER_ID = env("WHATSAPP_PHONE_NUMBER_ID", default="")
 WHATSAPP_APP_SECRET = env("WHATSAPP_APP_SECRET", default="")
 WHATSAPP_VERIFY_TOKEN = env("WHATSAPP_VERIFY_TOKEN", default="")
+# Kagaz's own WhatsApp number in digits (e.g. 919876543210). Goes into the
+# invite links people share; without it they say "send REF … to Kagaz".
+WHATSAPP_DISPLAY_NUMBER = env("WHATSAPP_DISPLAY_NUMBER", default="")
+
+# Razorpay (payments). Test keys start with rzp_test_. The webhook secret is the
+# one you type when adding the webhook in the Razorpay dashboard.
+RAZORPAY_KEY_ID = env("RAZORPAY_KEY_ID", default="")
+RAZORPAY_KEY_SECRET = env("RAZORPAY_KEY_SECRET", default="")
+RAZORPAY_WEBHOOK_SECRET = env("RAZORPAY_WEBHOOK_SECRET", default="")

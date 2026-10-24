@@ -13,7 +13,11 @@
       <h1>Your documents,<br>one message away.</h1>
       <p>Send any certificate, marksheet or card to Kagaz on WhatsApp. When a form asks for it, just ask, and get it back in the size and format the form wants.</p>
       <div class="cta">
-        <span class="btn"><svg class="icon sm"><use href="#i-whatsapp"/></svg>Coming soon on WhatsApp</span>
+        {% if business.whatsapp %}
+          <a class="btn" href="https://wa.me/{{ business.whatsapp }}?text=Hi"><svg class="icon sm"><use href="#i-whatsapp"/></svg>Message Kagaz on WhatsApp</a>
+        {% else %}
+          <a class="btn" href="#pricing">See plans</a>
+        {% endif %}
       </div>
       <p style="font-size:14px;margin-top:16px">Already using Kagaz? Type <strong>WEB</strong> in your Kagaz chat to open it here.</p>
     </div>
@@ -59,7 +63,48 @@
   </article>
 </section>
 
-<footer class="site-foot">
-  <a href="{% url 'core:privacy' %}">Privacy policy</a>
-</footer>
+<section class="plans" id="pricing">
+  <h2>Plans</h2>
+  <p class="muted">Prices in Indian rupees. Pay by UPI or card, right in the chat. Nothing renews automatically.</p>
+  <div class="plan-grid">
+    <article class="plan">
+      <h3>Free</h3>
+      <p class="price">₹0</p>
+      <ul>
+        <li>{{ free.documents }} documents</li>
+        <li>{{ free.conversions_per_month }} conversions a month</li>
+        <li>{{ free.questions_per_day }} questions a day</li>
+        <li>PIN for ID cards and bank papers</li>
+      </ul>
+    </article>
+    {% if plus_prices %}
+      <article class="plan featured">
+        <h3>Kagaz Plus</h3>
+        {% for option in plus_prices %}
+          <p class="price">₹{{ option.price }} <span>{{ option.period }}</span></p>
+        {% endfor %}
+        <ul>
+          <li>Unlimited documents</li>
+          <li>Unlimited conversions</li>
+          <li>{{ plus.questions_per_day }} questions a day</li>
+          <li>Everything in Free</li>
+        </ul>
+      </article>
+    {% endif %}
+    {% for pack in packs %}
+      <article class="plan">
+        <h3>{{ pack.name }}</h3>
+        <p class="price">₹{{ pack.price }} <span>one time</span></p>
+        <ul>
+          <li>{{ pack.conversions }} extra conversions on Free</li>
+          <li>They never expire</li>
+          <li>No subscription</li>
+        </ul>
+      </article>
+    {% endfor %}
+  </div>
+  <p class="plans-note muted">See our <a href="{% url 'core:refunds' %}">refund policy</a> and <a href="{% url 'core:terms' %}">terms</a>.</p>
+</section>
+
+{% include "core/_site_foot.html" %}
 {% endblock %}

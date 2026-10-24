@@ -7,6 +7,7 @@ import tempfile
 import time
 import uuid
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from huey.contrib.djhuey import HUEY
 from PIL import Image, ImageDraw
@@ -77,7 +78,7 @@ def intent_result(**overrides) -> dict:
 
 
 class KagazTestCase(TestCase):
-    """Temp storage, a fixed master key, console WhatsApp, and inline Huey."""
+    """Temp storage, a fixed master key, console WhatsApp, inline Huey and an in-memory cache."""
 
     @classmethod
     def setUpClass(cls):
@@ -91,6 +92,10 @@ class KagazTestCase(TestCase):
             WHATSAPP_PHONE_NUMBER_ID="123",
             PUBLIC_BASE_URL="https://kagaz.test",
             SECURE_SSL_REDIRECT=False,
+            CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
+            RAZORPAY_KEY_ID="rzp_test_key",
+            RAZORPAY_KEY_SECRET="rzp-test-secret",
+            RAZORPAY_WEBHOOK_SECRET="rzp-webhook-secret",
         )
         cls._overrides.enable()
         cls._huey_was_immediate = HUEY.immediate
@@ -105,6 +110,7 @@ class KagazTestCase(TestCase):
         shutil.rmtree(cls._media_root, ignore_errors=True)
 
     def setUp(self):
+        cache.clear()
         reset_clients()
         self.wa = get_client()
         self.wa.stream = io.StringIO()

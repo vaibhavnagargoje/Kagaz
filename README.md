@@ -67,11 +67,14 @@ One `KEY=value` per line; put comments on their own line.
 | `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` | PostgreSQL |
 | `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` | Email (printed in the terminal while `EMAIL_HOST_USER` is empty) |
 | `SUPPORT_EMAIL` | Shown in the bot's help: WhatsApp requires a way to reach a person |
+| `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `SUPPORT_PHONE` | Shown on the Contact, Terms and Refund pages (use the name in your Razorpay KYC). Phone is optional |
 | `KAGAZ_MASTER_KEY` | Encryption master key (`python manage.py generate_master_key`) |
 | `AI_PROVIDER`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_MODEL` | Which AI reads documents |
 | `WHATSAPP_BACKEND` and `WHATSAPP_*` | `console` for the terminal chat; `cloud` plus Meta's values for real WhatsApp |
 | `CSRF_TRUSTED_ORIGINS`, `REDIS_URL` | Only for ngrok/production |
 | `ADMIN_URL` | Server only: a random word, so the admin lives at `/<word>/` instead of `/admin/` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Payments (see "Plans and payments") |
+| `WHATSAPP_DISPLAY_NUMBER` | Kagaz's WhatsApp number in digits, for invite links (optional) |
 
 ## Get a free Gemini API key
 
@@ -135,6 +138,28 @@ its webhook within a few seconds, so slow work is handed to a **job queue**:
   server), and a separate worker, `python manage.py run_huey`, picks them up. The website answers
   instantly while the worker does the slow part.
 
+## Plans and payments
+
+| | Free | Plus (₹399/year or ₹49/month) |
+|---|---|---|
+| Documents | 25 | Unlimited |
+| Conversions | 5 a month, plus any bought in ₹19 packs of 10 | Unlimited |
+| Typed questions for the AI | 20 a day | 200 a day |
+
+- On WhatsApp: **PLUS** shows the buttons, a tap sends a Razorpay payment link (UPI or card), and
+  Plus switches on when Razorpay's webhook says it's paid. **PLAN** shows usage, **CODE SAVE20**
+  applies a promo code, and **REFER** gives the member's invite code.
+- Over the question limit, Kagaz searches by name instead of asking the AI.
+- When Plus ends, the member is back on Free. Documents are never deleted; only new saves over 25
+  are blocked.
+- Everything is edited in the admin under **Billing**: products and prices, promo codes (% or ₹ off,
+  max discount, minimum price, dates, "first N" uses, which products), the referral program, and a
+  read-only list of payments. A member's plan end date and credits can be changed by hand (refunds,
+  free grants); Plus with no end date never ends.
+- Razorpay setup: create API keys and a webhook to `https://<your domain>/billing/webhook/` with the
+  events `payment_link.paid`, `payment_link.expired` and `payment_link.cancelled`. Put the keys and
+  the webhook secret in `.env`. Try everything with test keys (`rzp_test_…`) first.
+
 ## Connect real WhatsApp (later)
 
 1. Create an app at [developers.facebook.com](https://developers.facebook.com) → add **WhatsApp**.
@@ -164,6 +189,7 @@ Django creates a temporary `test_<DB_NAME>` database and deletes it afterwards.
 | `accounts/` | `Member` (a WhatsApp user: consent, PIN, plan, encryption key), `AccessLink` (one-time links), `User` (admin staff), web sign-in (`sessions.py`), PIN pages, plan limits and PIN rules |
 | `vault/` | `Document` (encrypted file and details), `Conversion`, AI reading (`extraction.py`), conversions (`conversions.py`), `services.py`, the web chat (`chat.py`, `views.py`, `templates/vault/`) |
 | `bot/` | Webhook, WhatsApp client (`whatsapp.py`), message handling (`handlers.py`), AI intent (`intent.py`), all bot text (`replies.py`), background jobs (`tasks.py`), `chat` command |
+| `billing/` | Products, promo codes, referral program, payments (`models.py`), Razorpay client (`razorpay.py`), buying and switching Plus on (`services.py`), payment webhook (`views.py`) |
 
 ## How data is protected
 

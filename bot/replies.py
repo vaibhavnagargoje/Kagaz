@@ -9,7 +9,7 @@ from django.conf import settings
 from django.urls import reverse
 from django.utils import timezone
 
-from accounts.models import LINK_MINUTES, PIN_RESET_WAIT_HOURS
+from accounts.models import LINK_MINUTES, PIN_RESET_WAIT_HOURS, PLAN_LIMITS
 from bot.whatsapp import MAX_UPLOAD_MB
 
 
@@ -80,6 +80,7 @@ def help_text() -> str:
         "• *See everything:* LIST\n"
         "• *Open on the web:* WEB\n"
         "• *Set or change PIN:* PIN · *Forgot it?* FORGOT PIN\n"
+        "• *Your plan:* PLAN · *Upgrade:* PLUS · *Invite friends:* REFER\n"
         "• *Erase everything:* DELETE MY DATA\n\n"
         "🔒 ID cards and bank papers open on a secure page with your PIN."
         + support_line()
@@ -108,15 +109,166 @@ PIN_SAVED = "Your PIN is saved 🔐 ID cards and bank papers will only open afte
 def document_limit(limit: int) -> str:
     return (
         f"Your free plan holds {limit} documents and it's full. "
-        "Delete one you don't need (e.g. \"delete old electricity bill\") to make room. "
-        "Kagaz Plus with unlimited storage is coming soon."
+        "Delete one you don't need (e.g. \"delete old electricity bill\") to make room, "
+        "or type *PLUS* for unlimited storage."
     )
 
 
 def conversion_limit(limit: int) -> str:
     return (
         f"You've used your {limit} free conversions this month, so here's the original file. "
-        "Kagaz Plus with unlimited conversions is coming soon."
+        "Type *PLUS* for unlimited conversions, or to buy a few more."
+    )
+
+
+# --- Plans and payments ---
+
+PLANS_UNAVAILABLE = "Plans aren't available right now. Please try again later."
+PAYMENTS_DOWN = "Sorry, payments aren't working right now. Please try again in a little while."
+REFER_CLOSED = "Inviting friends isn't open right now. Please check back soon."
+REFERRAL_NOT_USED = "That code didn't work. It may be mistyped, or a friend's code is already added."
+
+
+def _date(moment) -> str:
+    return f"{timezone.localtime(moment):%d %b %Y}"
+
+
+def _plus_status(member) -> str:
+    if member.current_plan() == member.Plan.FREE:
+        return ""
+    if member.plan_expires_at:
+        return f"You're on Plus until *{_date(member.plan_expires_at)}*. Buying more adds to that.\n\n"
+    return "You're on Plus ✅\n\n"
+
+
+def plus_offer(member, note: str = "") -> str:
+    plus = PLAN_LIMITS["plus"]
+    return (
+        "*Kagaz Plus* ⭐\n"
+        "• Unlimited documents\n"
+        "• Unlimited conversions (size, PDF/JPG, photos for forms)\n"
+        f"• {plus['questions_per_day']} questions a day\n\n"
+        + _plus_status(member)
+        + (f"{note}\n\n" if note else "")
+        + "Tap one to get a payment link (UPI or card):"
+    )
+
+
+def promo_note(promo) -> str:
+    return f"🎟️ Code *{promo.code}* applied."
+
+
+def friend_note(percent: int) -> str:
+    return f"🎁 Friend's discount: {percent}% off your first purchase."
+
+
+def payment_link(payment) -> str:
+    was = f" ~₹{payment.list_price}~" if payment.discount else ""
+    return (
+        f"💳 *{payment.product.name}*: ₹{payment.amount}{was}\n"
+        f"Pay here (UPI or card):\n{payment.link_url}\n\n"
+        "The link works for 1 hour. I'll message you here as soon as it's paid."
+    )
+
+
+def payment_received(product, member) -> str:
+    lines = ["✅ Payment received, thank you!"]
+    if product.plus_days:
+        until = f" until *{_date(member.plan_expires_at)}*" if member.plan_expires_at else ""
+        lines.append(f"You're on *Kagaz Plus*{until}: unlimited documents and conversions.")
+    if product.conversions:
+        lines.append(f"{product.conversions} conversions added. You have {member.conversion_credits} extra conversions now.")
+    return "\n".join(lines)
+
+
+def referral_reward(days: int, referrer) -> str:
+    until = f" You're on Plus until *{_date(referrer.plan_expires_at)}*." if referrer.plan_expires_at else ""
+    return f"🎉 A friend you invited just bought Kagaz, so you get {days} days of Plus free.{until}"
+
+
+def code_applied(promo) -> str:
+    if promo.kind == promo.Kind.PERCENT:
+        off = f"{promo.value}% off" + (f" (up to ₹{promo.max_discount})" if promo.max_discount is not None else "")
+    else:
+        off = f"₹{promo.value} off"
+    only = ", ".join(p.name for p in promo.products.all())
+    return (
+        f"🎟️ Code *{promo.code}* applied: {off}{f' on {only}' if only else ''}. "
+        "It's kept for your next purchase for 24 hours. Type *PLUS* to see your price."
+    )
+
+
+def plan_summary(member) -> str:
+    limits = member.limits()
+    free = member.current_plan() == member.Plan.FREE
+    if free:
+        lines = ["*Your plan:* Free"]
+    elif member.plan_expires_at:
+        lines = [f"*Your plan:* Plus ⭐ until {_date(member.plan_expires_at)}"]
+    else:
+        lines = ["*Your plan:* Plus ⭐"]
+    documents = member.documents.count()
+    lines.append(f"• Documents: {documents}" + (f" of {limits['documents']}" if limits["documents"] else " (unlimited)"))
+    left = member.plan_conversions_left()
+    if left is None:
+        lines.append("• Conversions: unlimited")
+    else:
+        extra = f" + {member.conversion_credits} from packs" if member.conversion_credits else ""
+        lines.append(f"• Conversions left this month: {left}{extra}")
+    questions = limits["questions_per_day"]
+    lines.append(f"• Questions left today: {max(0, questions - member.questions_used_today())} of {questions}")
+    lines.append("\nType *PLUS* to " + ("upgrade" if free else "renew") + " · *REFER* to invite friends")
+    return "\n".join(lines)
+
+
+def refer_intro(code: str, program) -> str:
+    return (
+        "🎁 *Invite friends to Kagaz*\n\n"
+        f"Your code: *{code}*\n"
+        f"Your friend gets {program.friend_discount_percent}% off their first purchase. "
+        f"When they buy, you get {program.referrer_reward_days} days of Plus free.\n\n"
+        "Forward the next message to them 👇"
+    )
+
+
+def refer_share(code: str) -> str:
+    number = settings.WHATSAPP_DISPLAY_NUMBER
+    where = f"https://wa.me/{number}?text=REF%20{code}" if number else "Kagaz on WhatsApp"
+    return (
+        "I keep my documents on *Kagaz* 📄. It finds them on WhatsApp in seconds and sends them "
+        "in the size online forms need.\n\n"
+        f"Get a discount with my code: send *REF {code}* to {where}"
+    )
+
+
+def referral_added(percent: int) -> str:
+    return f"🎁 Friend's code added: {percent}% off your first purchase. Type *PLUS* to see plans."
+
+
+def _more_questions(member, on_web: bool) -> str:
+    if member.current_plan() != member.Plan.FREE:
+        return ""
+    where = " on WhatsApp" if on_web else ""
+    return f" Plus gives {PLAN_LIMITS['plus']['questions_per_day']} a day: type PLUS{where}."
+
+
+def question_limit_searched(member, on_web: bool = False) -> str:
+    limit = member.limits()["questions_per_day"]
+    return f"You've used today's {limit} questions, so I searched your documents by name.{_more_questions(member, on_web)}"
+
+
+def question_limit(member, on_web: bool = False) -> str:
+    limit = member.limits()["questions_per_day"]
+    return (
+        f"You've used today's {limit} questions and nothing matched by name. "
+        f"Try the exact name, or ask for your document list.{_more_questions(member, on_web)}"
+    )
+
+
+def renewal_notice(member) -> str:
+    return (
+        f"⏳ Your Kagaz Plus ends on *{_date(member.plan_expires_at)}*. Type *PLUS* to renew. "
+        "Your documents stay safe either way."
     )
 
 

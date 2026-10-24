@@ -31,6 +31,7 @@ AI_BUSY_NOTHING = "My AI helper is busy right now and nothing matched by name. T
 ON_WHATSAPP_PIN = "To set or change your PIN, type PIN in your Kagaz chat on WhatsApp."
 ON_WHATSAPP_FORGOT = "To reset a forgotten PIN, type FORGOT PIN in your Kagaz chat on WhatsApp."
 ON_WHATSAPP_WIPE = "To erase everything, type DELETE MY DATA in your Kagaz chat on WhatsApp."
+ON_WHATSAPP_PLANS = "Plans, codes and invites are in your Kagaz chat on WhatsApp: type PLUS, PLAN or REFER there."
 FROM_WHATSAPP = "Here's what you asked for on WhatsApp."
 
 EXAMPLES = [
@@ -99,20 +100,34 @@ def reply_to_text(member, text: str) -> list[dict]:
         return [bot_text(ON_WHATSAPP_FORGOT)]
     if command in handlers.WIPE_WORDS:
         return [bot_text(ON_WHATSAPP_WIPE)]
+    if (command in handlers.PLUS_WORDS | handlers.PLAN_WORDS | handlers.REFER_WORDS
+            or handlers.CODE_COMMAND.match(command) or handlers.REFERRAL_COMMAND.match(command)):
+        return [bot_text(ON_WHATSAPP_PLANS)]
 
     documents = list(member.documents.exclude(status=Document.Status.PROCESSING)[: intent.MAX_CATALOG])
     if not documents:
         return [bot_text(EMPTY)]
+    if not member.use_question():
+        return _search_by_name(
+            text, documents,
+            found=replies.question_limit_searched(member, on_web=True),
+            nothing=replies.question_limit(member, on_web=True),
+        )
     try:
         parsed = intent.parse(text, documents)
     except LLMError:
-        # The AI is down or out of quota: still find documents by name.
-        matches = [] if intent.mentions_delete(text) else intent.keyword_match(text, documents)
-        if not matches:
-            return [bot_text(AI_BUSY_NOTHING)]
-        cards = services.one_per_card(matches)
-        return [bot("docs", doc_ids=_ids(cards), note=AI_BUSY_FOUND, choose=len(cards) > 1)]
+        # The AI is down or out of quota.
+        return _search_by_name(text, documents, found=AI_BUSY_FOUND, nothing=AI_BUSY_NOTHING)
     return _reply_to_intent(parsed)
+
+
+def _search_by_name(text: str, documents, found: str, nothing: str) -> list[dict]:
+    """Find documents without the AI."""
+    matches = [] if intent.mentions_delete(text) else intent.keyword_match(text, documents)
+    if not matches:
+        return [bot_text(nothing)]
+    cards = services.one_per_card(matches)
+    return [bot("docs", doc_ids=_ids(cards), note=found, choose=len(cards) > 1)]
 
 
 def _reply_to_intent(parsed: intent.Intent) -> list[dict]:

@@ -13,11 +13,15 @@ Delivery rules (see `perform`):
 """
 
 import logging
+import re
 from dataclasses import asdict, fields
 
 from django.utils import timezone
 
 from accounts.models import AccessLink, Member
+from billing import services as billing
+from billing.models import Payment, Product, ReferralProgram
+from billing.razorpay import RazorpayError
 from bot import intent, replies, tasks
 from bot.models import InboundMessage
 from bot.whatsapp import FileTooLarge, WhatsAppError, get_client
@@ -39,6 +43,11 @@ CANCEL_RESET_WORDS = {"cancel reset", "cancel pin reset", "stop reset", "stop pi
 WEB_WORDS = {"web", "website", "login", "log in", "open web", "browser", "laptop"}
 WIPE_WORDS = {"delete my data", "delete all my data", "delete everything", "erase my data"}
 PRIVACY_WORDS = {"privacy", "privacy policy"}
+PLUS_WORDS = {"plus", "kagaz plus", "upgrade", "pricing", "price", "prices", "plans", "buy", "renew", "subscribe"}
+PLAN_WORDS = {"plan", "my plan", "usage", "my usage"}
+REFER_WORDS = {"refer", "invite", "referral", "refer a friend", "invite friends", "my code"}
+CODE_COMMAND = re.compile(r"^(?:code|promo|coupon)\s*[:#-]?\s*([a-z0-9_-]{2,32})$")
+REFERRAL_COMMAND = re.compile(r"^ref(?:erral)?(?:\s*code)?\s*[:#-]?\s*[a-z0-9]{6}$")
 
 FORMAT_CODES = {"original": "o", "pdf": "p", "jpg": "j"}
 
@@ -62,10 +71,15 @@ def handle_inbound(message_id: int):
             return
         Member.objects.filter(pk=member.pk).update(last_active_at=timezone.now())
         if not member.has_consented:
+            # A friend's invite code in the first message ("Hi! REF K7M2QX").
+            billing.use_referral_code(member, message.get("text", {}).get("body", ""))
             _before_consent(member, inbound, message)
             return
         _dispatch(member, message)
         inbound.finish()
+        fresh = Member.objects.filter(pk=member.pk).first()  # Gone after DELETE MY DATA.
+        if fresh and billing.renewal_notice_due(fresh):
+            client.send_text(fresh.wa_id, replies.renewal_notice(fresh))
     except Exception:
         logger.exception("Failed to handle inbound message %s", inbound.pk)
         inbound.finish(failed=True)
@@ -197,6 +211,16 @@ def _handle_text(member: Member, text: str):
         client.send_buttons(member.wa_id, replies.WIPE_CONFIRM, replies.WIPE_BUTTONS)
     elif command in PRIVACY_WORDS:
         client.send_text(member.wa_id, replies.privacy_details())
+    elif command in PLUS_WORDS:
+        _offer_plus(member)
+    elif command in PLAN_WORDS:
+        client.send_text(member.wa_id, replies.plan_summary(member))
+    elif command in REFER_WORDS:
+        _send_invite(member)
+    elif code := CODE_COMMAND.match(command):
+        _apply_code(member, code.group(1))
+    elif REFERRAL_COMMAND.match(command):
+        _add_friend_code(member, command)
     else:
         _understand(member, text)
 
@@ -207,6 +231,9 @@ def _understand(member: Member, text: str):
     if not documents:
         client.send_text(member.wa_id, replies.EMPTY_VAULT)
         return
+    if not member.use_question():
+        _fallback_search(member, text, documents, over_limit=True)
+        return
     try:
         parsed = intent.parse(text, documents)
     except LLMError as exc:
@@ -216,14 +243,14 @@ def _understand(member: Member, text: str):
     _run_intent(member, parsed)
 
 
-def _fallback_search(member: Member, text: str, documents: list[Document]):
-    """The AI is down or out of quota: still find documents by name."""
+def _fallback_search(member: Member, text: str, documents: list[Document], over_limit: bool = False):
+    """The AI is down, or today's questions are used up: still find documents by name."""
     client = get_client()
     matches = [] if intent.mentions_delete(text) else intent.keyword_match(text, documents)
     if not matches:
-        client.send_text(member.wa_id, replies.AI_UNAVAILABLE)
+        client.send_text(member.wa_id, replies.question_limit(member) if over_limit else replies.AI_UNAVAILABLE)
         return
-    client.send_text(member.wa_id, replies.AI_BUSY_SEARCHED)
+    client.send_text(member.wa_id, replies.question_limit_searched(member) if over_limit else replies.AI_BUSY_SEARCHED)
     if len(matches) == 1:
         perform(member, {"op": "send", "doc_ids": [str(matches[0].pk)], "options": {}})
     else:
@@ -311,6 +338,8 @@ def _handle_choice(member: Member, choice: str):
         perform(member, {"op": "delete", "doc_ids": [rest]})
     elif choice == "wipe:yes":
         perform(member, {"op": "wipe"})
+    elif kind == "buy":
+        _buy(member, rest)
     elif kind == "cancel":
         client.send_text(member.wa_id, replies.CANCELLED)
     else:
@@ -510,3 +539,74 @@ def _cancel_pin_reset(member: Member):
 def _send_web_link(member: Member):
     url = AccessLink.issue(member, AccessLink.Purpose.LOGIN)
     get_client().send_text(member.wa_id, replies.web_link(url, member.has_pin))
+
+
+# --- Plans and payments -----------------------------------------------------
+
+
+def _offer_plus(member: Member):
+    client = get_client()
+    products = billing.products_for(member)
+    if not products:
+        client.send_text(member.wa_id, replies.PLANS_UNAVAILABLE)
+        return
+    offers = [billing.quote(member, product) for product in products]
+    promo = next((o.promo for o in offers if o.promo), None)
+    if promo:
+        note = replies.promo_note(promo)
+    elif any(o.referral for o in offers):
+        note = replies.friend_note(billing.friend_discount_percent(member))
+    else:
+        note = ""
+    buttons = [(f"buy:{o.product.code}", f"{o.product.button_label} ₹{o.amount}") for o in offers]
+    client.send_buttons(member.wa_id, replies.plus_offer(member, note), buttons)
+
+
+def _buy(member: Member, code: str):
+    client = get_client()
+    product = Product.objects.filter(code=code, is_active=True).first()
+    if product is None:
+        client.send_text(member.wa_id, replies.PLANS_UNAVAILABLE)
+        return
+    try:
+        payment = billing.start_payment(member, product)
+    except RazorpayError:
+        logger.exception("Could not create a payment link for member %s", member.pk)
+        client.send_text(member.wa_id, replies.PAYMENTS_DOWN)
+        return
+    # A free (100% off) purchase is already switched on, and mark_paid sent the confirmation.
+    if payment.status != Payment.Status.PAID:
+        client.send_text(member.wa_id, replies.payment_link(payment))
+
+
+def _apply_code(member: Member, code: str):
+    if Member.objects.filter(referral_code=code.upper()).exists():
+        _add_friend_code(member, f"ref {code}")  # They typed "CODE K7M2QX" with a friend's code.
+        return
+    try:
+        promo = billing.apply_code(member, code)
+    except billing.PromoError as exc:
+        get_client().send_text(member.wa_id, str(exc))
+        return
+    get_client().send_text(member.wa_id, replies.code_applied(promo))
+
+
+def _send_invite(member: Member):
+    client = get_client()
+    program = ReferralProgram.get()
+    if not program.is_active:
+        client.send_text(member.wa_id, replies.REFER_CLOSED)
+        return
+    code = billing.referral_code(member)
+    client.send_text(member.wa_id, replies.refer_intro(code, program))
+    client.send_text(member.wa_id, replies.refer_share(code))  # On its own, so it's easy to forward.
+
+
+def _add_friend_code(member: Member, text: str):
+    client = get_client()
+    if not ReferralProgram.get().is_active:
+        client.send_text(member.wa_id, replies.REFER_CLOSED)
+    elif billing.use_referral_code(member, text):
+        client.send_text(member.wa_id, replies.referral_added(billing.friend_discount_percent(member)))
+    else:
+        client.send_text(member.wa_id, replies.REFERRAL_NOT_USED)
