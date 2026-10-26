@@ -85,7 +85,7 @@ class CloudClient:
             },
         })
 
-    def send_list(self, to: str, body: str, button: str, rows: list[tuple[str, str, str]]):
+    def send_list(self, to: str, body: str, button: str, rows: list[tuple[str, str, str]], section: str = "Documents"):
         """A pick-one list of up to 10 rows as (id, title, description)."""
         self._send(to, {
             "type": "interactive",
@@ -95,7 +95,7 @@ class CloudClient:
                 "action": {
                     "button": clip(button, 20),
                     "sections": [{
-                        "title": "Documents",
+                        "title": clip(section, 24),
                         "rows": [
                             {"id": row_id, "title": clip(title, 24), **({"description": clip(description, 72)} if description else {})}
                             for row_id, title, description in rows[:10]
@@ -194,7 +194,7 @@ class ConsoleClient:
         choices = "\n".join(f"  [{n}] {title}" for n, (_, title) in enumerate(buttons, 1))
         self._show(f"{body}\n{choices}\n  (type /tap <number>)")
 
-    def send_list(self, to, body, button, rows):
+    def send_list(self, to, body, button, rows, section="Documents"):
         self.sent.append({"type": "list", "to": to, "body": body, "rows": rows})
         self.options, self.options_kind = [(row_id, title) for row_id, title, _ in rows], "list"
         choices = "\n".join(

@@ -68,8 +68,21 @@ CONSENT_GIVEN = (
 
 
 def help_text() -> str:
+    """Sent with the Menu list, so nobody has to remember commands."""
     return (
-        "*How to use Kagaz* 📄\n\n"
+        "*Kagaz* 📄 Just tell me what you need, in your own words:\n\n"
+        "• _\"send my 12th marksheet\"_\n"
+        "• _\"10th marksheet under 100 KB\"_\n"
+        "• _\"what's my 12th roll number?\"_\n\n"
+        "Send any document or photo to save it. Tap *Menu* for everything else.\n\n"
+        "🔒 ID cards and bank papers open on a secure page with your PIN."
+        + support_line()
+    )
+
+
+def how_to_ask() -> str:
+    return (
+        "*What you can ask* 💬 (English, Hindi or Hinglish all work)\n\n"
         "• *Save:* send any document or photo here\n"
         "• *Get it back:* \"send my 12th marksheet\"\n"
         "• *Shrink it:* \"12th marksheet under 100 KB\"\n"
@@ -77,19 +90,29 @@ def help_text() -> str:
         "• *Photo for forms:* \"my photo 200x230 px under 50 KB\"\n"
         "• *Combine:* \"10th and 12th marksheet in one PDF\"\n"
         "• *Ask a detail:* \"what's my 12th roll number?\"\n"
-        "• *See everything:* LIST\n"
-        "• *Open on the web:* WEB\n"
-        "• *Set or change PIN:* PIN · *Forgot it?* FORGOT PIN\n"
-        "• *Your plan:* PLAN · *Upgrade:* PLUS · *Invite friends:* REFER\n"
-        "• *Erase everything:* DELETE MY DATA\n\n"
-        "🔒 ID cards and bank papers open on a secure page with your PIN."
-        + support_line()
+        "• *Remove one:* \"delete old electricity bill\"\n\n"
+        "Shortcuts, if you like: LIST · WEB · PIN · PLAN · PLUS · REFER"
     )
+
+
+MENU_PROMPT = "What would you like to do? Tap *Menu* to choose."
+MENU_ROWS = [
+    ("menu:list", "📄 My documents", "See everything you've saved"),
+    ("menu:howto", "💬 How to ask", "Examples of what you can type"),
+    ("menu:web", "🌐 Open on the web", "A sign-in link for your browser"),
+    ("menu:pin", "🔒 Set or change PIN", "Protects ID cards and bank papers"),
+    ("menu:forgot_pin", "❓ Forgot my PIN", "Reset it after a 24-hour wait"),
+    ("menu:plan", "📊 My plan", "Your limits and what you've used"),
+    ("menu:plus", "⭐ Kagaz Plus", "Unlimited documents and conversions"),
+    ("menu:refer", "🎁 Invite friends", "Share Kagaz, get Plus days free"),
+    ("menu:privacy", "🛡️ Privacy", "How your documents are kept safe"),
+]
+MENU_ACTIONS = {row_id.removeprefix("menu:") for row_id, _, _ in MENU_ROWS}
 
 
 EMPTY_VAULT = "Your Kagaz is empty. Send me a document or photo to save it. Type HELP to see what I can do."
 SOMETHING_WENT_WRONG = "Sorry, something went wrong on my side. Please try again in a minute."
-AI_UNAVAILABLE = "Sorry, I couldn't understand that right now. Please try again in a minute, or type LIST to see your documents."
+AI_UNAVAILABLE = "Sorry, I couldn't understand that right now. Try other words, or tap *Menu*."
 AI_BUSY_SEARCHED = "My AI helper is busy right now, so I searched your documents by name."
 VOICE_NOT_YET = "I can't listen to voice notes yet. Please type what you need 🙏"
 UNSUPPORTED = "I can save documents and photos, and send them back when you ask. Type HELP to see how."
@@ -295,14 +318,76 @@ def saved(document, member, read=None) -> str:
     if labels:
         lines.append(f"I can tell you: {', '.join(labels)}")
     if read and read.partner:
-        lines.append(f"🔗 Matched with the {read.partner.side} side you saved earlier. "
-                     "I'll send both sides together, on one page.")
+        lines.append(pair_line(read))
+    elif read and read.choices:
+        pass  # A list follows, asking which card it belongs to.
     elif document.side in ("front", "back") and not document.card_group:
-        other = "back" if document.side == "front" else "front"
-        lines.append(f"📎 If it has a {other} side, send that too and I'll keep them together.")
+        lines.append(f"📎 If it has a {other_side(document.side)} side, send that too and I'll keep them together.")
     if document.is_sensitive:
         lines.append(_protected_line(member))
     return "\n".join(lines)
+
+
+# --- Front and back of a card ---
+
+PAIR_FAILED = "I couldn't join those two. One of them may already be joined to another side, or deleted."
+
+
+def other_side(side: str) -> str:
+    return "back" if side == "front" else "front"
+
+
+def pair_line(read) -> str:
+    """How a new side was joined to one saved earlier."""
+    if read.sure:
+        return (f"🔗 Matched with the {read.partner.side} side you saved earlier. "
+                "I'll send both sides together, on one page.")
+    return (f"🔗 I joined it with the {read.partner.side} side of {_card_name(read.partner)} you saved earlier, "
+            "so both sides go together on one page. Wrong card? Tap *Not this card*.")
+
+
+def _card_name(document) -> str:
+    holder = document.get_details().get("holder_name")
+    return f"*{document.title}*" + (f" ({holder})" if holder else "")
+
+
+def which_card(document) -> str:
+    return (
+        f"Which card is this *{document.side}* side from? "
+        f"I have more than one {document.title} {other_side(document.side)} it could go with. Pick it below."
+    )
+
+
+def paired(document, partner) -> str:
+    return (
+        f"🔗 Done: the {document.side} and {partner.side} of {_card_name(partner)} are joined. "
+        "I'll send both sides together, on one page."
+    )
+
+
+def kept_as_new_card(document) -> str:
+    return (
+        f"👍 Okay, it's kept as a separate card. Send its {other_side(document.side)} side anytime "
+        "and I'll join them."
+    )
+
+
+def unpaired(document, choices_follow: bool) -> str:
+    if choices_follow:
+        return "👍 Okay, I've separated them. Which card does it belong to?"
+    return (
+        f"👍 Okay, I've separated them. Send the right {other_side(document.side)} side "
+        "and I'll join it."
+    )
+
+
+def document_count(total: int, on_web: bool = False) -> str:
+    if not total:
+        return EMPTY_VAULT
+    saved = f"You have {total} document{'s' if total != 1 else ''} saved."
+    if on_web:
+        return f"{saved} Ask for “my documents” to see them."
+    return f"{saved} Tap *Menu* → My documents to see them."
 
 
 def label_question(document, read) -> str:

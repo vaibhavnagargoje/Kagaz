@@ -142,6 +142,13 @@ class Member(TimeStampedModel):
         cache.add(key, 0, 60 * 60 * 25)
         return cache.incr(key) <= self.limits()["questions_per_day"]
 
+    def refund_question(self):
+        """Give back a question the AI couldn't answer (it was down, or out of credits)."""
+        try:
+            cache.decr(self._questions_key())
+        except ValueError:
+            pass  # The day's counter is already gone.
+
     # --- PIN ---
 
     @property

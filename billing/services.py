@@ -104,6 +104,16 @@ def apply_code(member, code: str) -> PromoCode:
     return promo
 
 
+def code_kind(code: str) -> str:
+    """"promo" or "referral" when someone types just a code ("SAVE20"), else ""."""
+    code = "".join(code.split()).upper()
+    if PromoCode.objects.filter(code=code).exists():
+        return "promo"
+    if Member.objects.filter(referral_code=code).exists():
+        return "referral"
+    return ""
+
+
 def pending_promo(member) -> PromoCode | None:
     if not member.pending_promo_code or not member.pending_promo_set_at:
         return None

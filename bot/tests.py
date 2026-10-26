@@ -238,6 +238,99 @@ class ConversationTests(KagazTestCase):
         ai.assert_not_called()
         self.assertIn("CBSE Class 10 Marksheet", self.last_text())
 
+    def test_everyday_wording_and_typos_work_without_the_ai(self):
+        member = self.make_member()
+        self.save_file(member)
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")) as ai:
+            self.receive_text(member.wa_id, "show my document list")
+            self.assertIn("*Your documents* (1)", self.last_text())
+            self.receive_text(member.wa_id, "how many document do you have ?")
+            self.assertIn("You have 1 document saved", self.last_text())
+            self.receive_text(member.wa_id, "lsit")
+            self.assertIn("*Your documents* (1)", self.last_text())
+            self.receive_text(member.wa_id, "kitne documents hai")
+            self.assertIn("You have 1 document saved", self.last_text())
+            self.receive_text(member.wa_id, "upgrde")
+            self.assertIn("Kagaz Plus", self.sent("buttons")[-1]["body"])
+        ai.assert_not_called()
+        self.assertEqual(self.sent("document"), [])  # Nothing random sent.
+
+    def test_erasing_everything_needs_the_exact_words(self):
+        member = self.make_member()
+        self.save_file(member)
+        with mock.patch("bot.intent.structured_call", return_value=intent_result(intent="other", refs=[], reply="?")):
+            self.receive_text(member.wa_id, "delete my dta")
+        self.assertNotIn("Yes, erase all", str(self.sent("buttons")))
+
+    def test_hi_sends_help_with_the_menu_and_a_tap_runs_it(self):
+        member = self.make_member()
+        self.save_file(member)
+        self.receive_text(member.wa_id, "hi")
+        menu = self.sent("list")[-1]
+        self.assertIn("in your own words", menu["body"])
+        self.assertIn(("menu:list", "📄 My documents", "See everything you've saved"), menu["rows"])
+
+        self.receive_tap(member.wa_id, "menu:list", kind="list_reply")
+        self.assertIn("*Your documents* (1)", self.last_text())
+        self.receive_tap(member.wa_id, "menu:howto", kind="list_reply")
+        self.assertIn("What you can ask", self.last_text())
+
+    def test_menu_ids_cannot_reach_other_commands(self):
+        member = self.make_member()
+        self.save_file(member)
+        self.receive_tap(member.wa_id, "menu:wipe", kind="list_reply")
+        self.assertNotIn("Yes, erase all", str(self.sent("buttons")))
+        self.assertTrue(Member.objects.exists())
+
+    def test_ai_understands_app_requests_too(self):
+        member = self.make_member()
+        self.save_file(member)
+        self.ask(member, "plus kitne ka hai bhai, mujhe lena hai", intent="upgrade", refs=[])
+        self.assertIn("Kagaz Plus", self.sent("buttons")[-1]["body"])
+        self.ask(member, "how much stuff have I stored with you so far", intent="count_documents", refs=[])
+        self.assertIn("You have 1 document saved", self.last_text())
+
+    def test_a_failed_ai_call_does_not_use_up_a_question(self):
+        member = self.make_member()
+        self.save_file(member)
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")):
+            self.receive_text(member.wa_id, "mera 10th wala marksheet bhejo please")
+        self.assertEqual(member.questions_used_today(), 0)
+
+    def test_ai_down_asks_instead_of_guessing_on_a_close_call(self):
+        member = self.make_member()
+        self.save_file(member, data=make_pdf(), title="Class 10 Marksheet", keywords=[])
+        self.save_file(member, data=make_pdf(pages=2), title="Class 12 Marksheet", keywords=[])
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")):
+            self.receive_text(member.wa_id, "marksheet bhejo")
+        self.assertEqual(self.sent("document"), [])
+        self.assertEqual(len(self.sent("list")[-1]["rows"]), 2)
+
+    def test_ai_down_finds_a_typo(self):
+        member = self.make_member()
+        self.save_file(member, title="Passport Size Photo", category="photo", keywords=[])
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")):
+            self.receive_text(member.wa_id, "pasport photo")
+        self.assertTrue(self.sent("document")[-1]["filename"].startswith("Passport_Size_Photo"))
+
+    def test_ai_down_with_no_match_offers_the_menu(self):
+        member = self.make_member()
+        self.save_file(member)
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")):
+            self.receive_text(member.wa_id, "electricity bill from last year")
+        self.assertEqual(self.sent("document"), [])
+        self.assertIn("tap *Menu*", self.sent("list")[-1]["body"])
+
+    def test_a_promo_code_typed_alone_is_applied(self):
+        from billing.models import PromoCode
+
+        member = self.make_member()
+        PromoCode.objects.create(code="SAVE20", kind=PromoCode.Kind.PERCENT, value=20)
+        self.receive_text(member.wa_id, "save20")
+        member.refresh_from_db()
+        self.assertEqual(member.pending_promo_code, "SAVE20")
+        self.assertIn("Code *SAVE20* applied", self.last_text())
+
     def test_off_topic_message_gets_polite_reply(self):
         member = self.make_member()
         self.save_file(member)
@@ -296,8 +389,65 @@ class CardAndLabelConversationTests(KagazTestCase):
     def test_second_side_is_matched_and_announced(self):
         self.save_card("front")
         self.assertIn("If it has a back side", self.last_text())
-        self.save_card("back", holder="")
+        self.save_card("back", holder="Asha Verma")
         self.assertIn("Matched with the front side", self.last_text())
+
+    def test_only_possible_side_is_joined_with_an_undo_button(self):
+        front = self.save_card("front")
+        back = self.save_card("back", holder="")  # No name or number: it's only the one candidate.
+        message = self.sent("buttons")[-1]
+        self.assertIn("joined it with the front side of *Vehicle RC* (Asha Verma)", message["body"])
+        self.assertEqual(message["buttons"], [(f"unpair:{back.pk}", "Not this card")])
+
+        self.receive_tap(self.member.wa_id, f"unpair:{back.pk}")
+        front.refresh_from_db()
+        back.refresh_from_db()
+        self.assertIsNone(front.card_group)
+        self.assertIsNone(back.card_group)
+        self.assertIn("separated them", self.last_text())
+
+    def test_back_with_two_possible_fronts_asks_which_card(self):
+        mine = self.save_card("front", category="pan", title="PAN Card", holder="Vaibhav Nagargoje")
+        self.save_card("front", category="pan", title="PAN Card", holder="Sundardas Nagargoje")
+        back = self.save_card("back", category="pan", title="PAN Card", holder="")
+        question = self.sent("list")[-1]
+        self.assertIn("Which card is this *back* side from?", question["body"])
+        self.assertEqual(len(question["rows"]), 3)  # Two fronts + "None of these".
+        self.assertIn("Vaibhav Nagargoje", str(question["rows"]))
+
+        self.receive_tap(self.member.wa_id, f"pair:{back.pk}:{mine.pk}", kind="list_reply")
+        mine.refresh_from_db()
+        back.refresh_from_db()
+        self.assertEqual(mine.card_group, back.card_group)
+        self.assertIsNotNone(back.card_group)
+        self.assertIn("are joined", self.last_text())
+
+    def test_back_first_then_front_still_pairs(self):
+        back = self.save_card("back", category="aadhaar", title="Aadhaar Card", holder="")
+        self.assertIn("If it has a front side", self.last_text())
+        front = self.save_card("front", category="aadhaar", title="Aadhaar Card")
+        front.refresh_from_db()
+        back.refresh_from_db()
+        self.assertEqual(front.card_group, back.card_group)
+        self.assertIsNotNone(front.card_group)
+
+    def test_none_of_these_keeps_it_separate(self):
+        self.save_card("front", category="pan", title="PAN Card", holder="Vaibhav Nagargoje")
+        self.save_card("front", category="pan", title="PAN Card", holder="Sundardas Nagargoje")
+        back = self.save_card("back", category="pan", title="PAN Card", holder="")
+        self.receive_tap(self.member.wa_id, f"pair:{back.pk}:new", kind="list_reply")
+        back.refresh_from_db()
+        self.assertIsNone(back.card_group)
+        self.assertIn("kept as a separate card", self.last_text())
+
+    def test_cannot_pair_with_someone_elses_document(self):
+        other = self.make_member(wa_id="918888888888")
+        theirs = self.save_doc(other, data=make_jpeg(800, 500, text="theirs"), mime="image/jpeg",
+                               category="pan", title="PAN Card", side="front")
+        back = self.save_card("back", category="pan", title="PAN Card", holder="")
+        self.receive_tap(self.member.wa_id, f"pair:{back.pk}:{theirs.pk}", kind="list_reply")
+        back.refresh_from_db()
+        self.assertIsNone(back.card_group)
 
     def test_card_comes_as_one_page_with_both_sides(self):
         self.save_card("front")

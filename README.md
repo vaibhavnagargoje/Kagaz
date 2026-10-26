@@ -14,20 +14,28 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap and monetization.
   shows a pick list. If the AI is down or out of quota, it still finds documents by name.
 - **Answer details:** "what's my 12th roll number?" → the number **plus the document**, to double-check.
 - **Convert:** shrink to N KB, PDF ↔ JPG, merge into one PDF, resize photos/signatures to exact pixels.
-- **Two-sided cards:** front and back photos (Aadhaar, DL, RC…) are matched automatically and sent as
-  **one page with both sides**, like a photocopy. "aadhaar back" sends just one side.
+- **Two-sided cards:** front and back photos (Aadhaar, DL, RC…) are sent as **one page with both
+  sides**, like a photocopy, in whichever order they arrive. A matching ID number or name joins them
+  for sure. If there's only one possible other side, they're joined with a **Not this card** undo
+  button. If there are several (your PAN and your father's), the bot asks which card it is.
+  "aadhaar back" sends just one side.
 - **"What is this?"** When the AI can't tell (blurry photo, damaged file, AI busy), the bot asks with a
   10-option list. A label can add protection but never remove it.
 - **Re-reading:** documents the AI skipped while busy are read again automatically (5 min, 15 min,
   1 h, 3 h, 12 h later). Locally, run `python manage.py reread_documents`, or press "Try reading again"
-  on the document's web page.
+  on the document's web page. Add `--include-failed` to also retry documents that gave up because the
+  AI stayed unavailable (e.g. Gemini credits ran out: the logs then say "Gemini credits are used up").
 - **Forgot PIN:** `FORGOT PIN` starts a **24-hour delayed reset**. The owner can stop it with `CANCEL
   RESET`, and using the correct PIN meanwhile cancels it automatically. After 24 hours, `PIN` gives a
   link to set a new PIN without the old one, and it works even if locked out.
 - **Web chat** (Django templates): the same conversation as WhatsApp, in the browser. It has bubbles,
   quick-reply chips, file cards with Download / Options, a paperclip for uploads, a PIN sheet that pops
   up for ID documents, and a document viewer. Opened from a one-time WhatsApp link plus the PIN.
-- **Control:** LIST, WEB, PIN, FORGOT PIN, CANCEL RESET, DELETE MY DATA, plus consent before anything is stored.
+- **No commands to remember:** people type in their own words, and typos, Hindi and Hinglish all work
+  ("lsit", "kitne documents hai", "pin bhool gaya"). HI or HELP shows a **Menu** button. Short
+  messages are matched without the AI (`bot/commands.py`); longer ones go to the AI.
+- **Control:** LIST, WEB, PIN, FORGOT PIN, CANCEL RESET, DELETE MY DATA (exact words only, then a
+  confirmation), plus consent before anything is stored.
 
 ### What goes in the chat vs. the secure page
 

@@ -59,10 +59,22 @@
       {% endif %}
 
     {% elif entry.type == "saved" %}
-      <span class="lead">{% if entry.duplicate %}Already saved{% else %}Saved{% endif %}</span>
+      <span class="lead">{% if entry.duplicate %}Already saved{% elif entry.separated %}Separated{% else %}Saved{% endif %}</span>
       {% include "vault/_card.html" with card=entry.card %}
       {% if entry.lines %}
         <ul class="lines">{% for line in entry.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if entry.pair_options %}
+        <div class="chips">
+          {% for option in entry.pair_options %}
+            <button type="button" class="chip" data-action="pair" data-doc="{{ entry.document.pk }}" data-value="{{ option.id }}" data-label="It goes with {{ option.label }}">{{ option.label }}</button>
+          {% endfor %}
+          <button type="button" class="chip" data-action="pair" data-doc="{{ entry.document.pk }}" data-value="new" data-label="None of these">None of these</button>
+        </div>
+      {% elif entry.can_unpair %}
+        <div class="chips">
+          <button type="button" class="chip" data-action="unpair" data-doc="{{ entry.document.pk }}" data-label="Not this card">Not this card</button>
+        </div>
       {% endif %}
       {% if entry.ask_label %}
         <span class="text">What is it? Choosing a type helps you find it later.</span>

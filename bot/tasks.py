@@ -31,18 +31,29 @@ def send_text(wa_id: str, text: str):
     get_client().send_text(wa_id, text)
 
 
-def reread_and_notify(now: bool = False) -> int:
-    """Read documents the AI skipped while busy; tell people who chatted recently."""
+def reread_and_notify(now: bool = False, include_failed: bool = False, limit: int = 20) -> int:
+    """Read documents the AI skipped while busy; tell people who chatted recently.
+
+    If a card side could belong to several cards, they're asked which one.
+    """
     from bot import replies
+    from bot.handlers import ask_which_card
     from bot.whatsapp import WhatsAppError, get_client
     from vault import services
 
-    done = services.reread_due_documents(now=now)
-    for document, title_before in done:
+    done = services.reread_due_documents(limit=limit, now=now, include_failed=include_failed)
+    for document, title_before, read in done:
         member = document.member
         if member.last_active_at and member.last_active_at > timezone.now() - FREE_REPLY_WINDOW:
             try:
-                get_client().send_text(member.wa_id, replies.read_later(title_before, document))
+                text = replies.read_later(title_before, document)
+                if read.partner and not read.sure:
+                    text += "\n\n" + replies.pair_line(read)
+                    get_client().send_buttons(member.wa_id, text, [(f"unpair:{document.pk}", "Not this card")])
+                else:
+                    get_client().send_text(member.wa_id, text)
+                if read.choices:
+                    ask_which_card(member, document, read.choices)
             except WhatsAppError:
                 logger.warning("Could not tell member %s that document %s was read", member.pk, document.pk)
     return len(done)

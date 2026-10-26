@@ -13,7 +13,6 @@ Delivery rules (see `perform`):
 """
 
 import logging
-import re
 from dataclasses import asdict, fields
 
 from django.utils import timezone
@@ -22,7 +21,7 @@ from accounts.models import AccessLink, Member
 from billing import services as billing
 from billing.models import Payment, Product, ReferralProgram
 from billing.razorpay import RazorpayError
-from bot import intent, replies, tasks
+from bot import commands, intent, replies, tasks
 from bot.models import InboundMessage
 from bot.whatsapp import FileTooLarge, WhatsAppError, get_client
 from core.llm import LLMError
@@ -31,23 +30,6 @@ from vault.conversions import ConversionError, SendOptions
 from vault.models import LABEL_CHOICES, Document
 
 logger = logging.getLogger(__name__)
-
-HELP_WORDS = {"hi", "hii", "hello", "hey", "help", "start", "menu", "namaste", "?"}
-LIST_WORDS = {"list", "my documents", "documents", "show all", "all documents"}
-PIN_WORDS = {"pin", "set pin", "change pin", "new pin"}
-FORGOT_WORDS = {
-    "forgot pin", "forgot my pin", "forgot", "reset pin", "reset my pin", "pin reset",
-    "pin bhool gaya", "pin bhul gaya", "pin bhool gayi", "pin bhul gayi",
-}
-CANCEL_RESET_WORDS = {"cancel reset", "cancel pin reset", "stop reset", "stop pin reset"}
-WEB_WORDS = {"web", "website", "login", "log in", "open web", "browser", "laptop"}
-WIPE_WORDS = {"delete my data", "delete all my data", "delete everything", "erase my data"}
-PRIVACY_WORDS = {"privacy", "privacy policy"}
-PLUS_WORDS = {"plus", "kagaz plus", "upgrade", "pricing", "price", "prices", "plans", "buy", "renew", "subscribe"}
-PLAN_WORDS = {"plan", "my plan", "usage", "my usage"}
-REFER_WORDS = {"refer", "invite", "referral", "refer a friend", "invite friends", "my code"}
-CODE_COMMAND = re.compile(r"^(?:code|promo|coupon)\s*[:#-]?\s*([a-z0-9_-]{2,32})$")
-REFERRAL_COMMAND = re.compile(r"^ref(?:erral)?(?:\s*code)?\s*[:#-]?\s*[a-z0-9]{6}$")
 
 FORMAT_CODES = {"original": "o", "pdf": "p", "jpg": "j"}
 
@@ -183,7 +165,26 @@ def _save(member: Member, media: dict):
     elif result.read.needs_label:
         _ask_label(member, result.document, result.read)
     else:
-        client.send_text(member.wa_id, replies.saved(result.document, member, result.read))
+        announce_saved(member, result.document, result.read)
+
+
+def announce_saved(member: Member, document: Document, read: services.ReadResult):
+    """Say what was saved, and settle which card a front or back belongs to."""
+    client = get_client()
+    text = replies.saved(document, member, read)
+    if read.partner and not read.sure:
+        client.send_buttons(member.wa_id, text, [(f"unpair:{document.pk}", "Not this card")])
+        return
+    client.send_text(member.wa_id, text)
+    if read.choices:
+        ask_which_card(member, document, read.choices)
+
+
+def ask_which_card(member: Member, document: Document, choices: list[Document]):
+    other = replies.other_side(document.side)
+    rows = [(f"pair:{document.pk}:{c.pk}", c.title, _describe_side(c)) for c in choices[: services.MAX_PAIR_CHOICES]]
+    rows.append((f"pair:{document.pk}:new", "None of these", f"It's a new card: I'll wait for its {other}"))
+    get_client().send_list(member.wa_id, replies.which_card(document), "Choose card", rows, section="Cards")
 
 
 def _ask_label(member: Member, document: Document, read):
@@ -193,36 +194,67 @@ def _ask_label(member: Member, document: Document, read):
 
 
 def _handle_text(member: Member, text: str):
-    client = get_client()
-    command = " ".join(text.lower().split()).strip(" .!")
-    if command in HELP_WORDS:
-        client.send_text(member.wa_id, replies.help_text())
-    elif command in LIST_WORDS:
-        _send_list(member)
-    elif command in PIN_WORDS:
-        _send_pin_link(member)
-    elif command in FORGOT_WORDS:
-        _forgot_pin(member)
-    elif command in CANCEL_RESET_WORDS:
-        _cancel_pin_reset(member)
-    elif command in WEB_WORDS:
-        _send_web_link(member)
-    elif command in WIPE_WORDS:
-        client.send_buttons(member.wa_id, replies.WIPE_CONFIRM, replies.WIPE_BUTTONS)
-    elif command in PRIVACY_WORDS:
-        client.send_text(member.wa_id, replies.privacy_details())
-    elif command in PLUS_WORDS:
-        _offer_plus(member)
-    elif command in PLAN_WORDS:
-        client.send_text(member.wa_id, replies.plan_summary(member))
-    elif command in REFER_WORDS:
-        _send_invite(member)
-    elif code := CODE_COMMAND.match(command):
-        _apply_code(member, code.group(1))
-    elif REFERRAL_COMMAND.match(command):
-        _add_friend_code(member, command)
+    command = command_for(text)
+    if command:
+        run_command(member, command)
     else:
         _understand(member, text)
+
+
+def command_for(text: str) -> commands.Command | None:
+    """What a typed message asks Kagaz to do, if it's a command (or a code typed on its own)."""
+    command = commands.match(text)
+    if command is None and (code := commands.lone_code(text)):
+        kind = billing.code_kind(code)
+        if kind == "promo":
+            command = commands.Command("code", code)
+        elif kind == "referral":
+            command = commands.Command("friend_code", f"ref {code}")
+    return command
+
+
+def send_menu(member: Member, body: str):
+    get_client().send_list(member.wa_id, body, "Menu", replies.MENU_ROWS, section="Kagaz")
+
+
+def run_command(member: Member, command: commands.Command):
+    """One place for every command, whether typed, tapped in the Menu or worked out by the AI."""
+    client = get_client()
+    action = command.action
+    if action == "help":
+        send_menu(member, replies.help_text())
+    elif action == "menu":
+        send_menu(member, replies.MENU_PROMPT)
+    elif action == "howto":
+        client.send_text(member.wa_id, replies.how_to_ask())
+    elif action == "list":
+        _send_list(member)
+    elif action == "count":
+        client.send_text(member.wa_id, replies.document_count(member.documents.count()))
+    elif action == "pin":
+        _send_pin_link(member)
+    elif action == "forgot_pin":
+        _forgot_pin(member)
+    elif action == "cancel_reset":
+        _cancel_pin_reset(member)
+    elif action == "web":
+        _send_web_link(member)
+    elif action == "privacy":
+        client.send_text(member.wa_id, replies.privacy_details())
+    elif action == "plus":
+        _offer_plus(member)
+    elif action == "plan":
+        client.send_text(member.wa_id, replies.plan_summary(member))
+    elif action == "refer":
+        _send_invite(member)
+    elif action == "code":
+        _apply_code(member, command.arg)
+    elif action == "friend_code":
+        _add_friend_code(member, command.arg)
+    elif action == "wipe":
+        client.send_buttons(member.wa_id, replies.WIPE_CONFIRM, replies.WIPE_BUTTONS)
+    else:
+        send_menu(member, replies.help_text())
 
 
 def _understand(member: Member, text: str):
@@ -237,6 +269,7 @@ def _understand(member: Member, text: str):
     try:
         parsed = intent.parse(text, documents)
     except LLMError as exc:
+        member.refund_question()
         logger.warning("Could not understand a message from member %s: %s", member.pk, exc)
         _fallback_search(member, text, documents)
         return
@@ -244,24 +277,31 @@ def _understand(member: Member, text: str):
 
 
 def _fallback_search(member: Member, text: str, documents: list[Document], over_limit: bool = False):
-    """The AI is down, or today's questions are used up: still find documents by name."""
+    """The AI is down, or today's questions are used up: still find documents by name.
+
+    A document is sent only when it clearly matches best; otherwise they pick.
+    """
     client = get_client()
-    matches = [] if intent.mentions_delete(text) else intent.keyword_match(text, documents)
-    if not matches:
-        client.send_text(member.wa_id, replies.question_limit(member) if over_limit else replies.AI_UNAVAILABLE)
+    scored = [] if intent.mentions_delete(text) else intent.keyword_scores(text, documents)
+    if not scored:
+        send_menu(member, replies.question_limit(member) if over_limit else replies.AI_UNAVAILABLE)
         return
     client.send_text(member.wa_id, replies.question_limit_searched(member) if over_limit else replies.AI_BUSY_SEARCHED)
-    if len(matches) == 1:
-        perform(member, {"op": "send", "doc_ids": [str(matches[0].pk)], "options": {}})
+    best = intent.best_match(scored)
+    if best:
+        perform(member, {"op": "send", "doc_ids": [str(best.pk)], "options": {}})
     else:
-        _ask_which(member, matches, SendOptions())
+        _ask_which(member, services.one_per_card([d for _, d in scored]), SendOptions())
 
 
 def _run_intent(member: Member, parsed: intent.Intent):
     client = get_client()
     documents = parsed.documents
 
-    if parsed.action == "send_document":
+    if parsed.action in intent.APP_ACTIONS:
+        run_command(member, commands.Command(intent.APP_ACTIONS[parsed.action]))
+
+    elif parsed.action == "send_document":
         wants_several = parsed.send_all or parsed.options.merge
         cards = services.one_per_card(documents)  # A card's two sides count as one.
         if not cards:
@@ -284,9 +324,6 @@ def _run_intent(member: Member, parsed: intent.Intent):
         else:
             perform(member, {"op": "field", "doc_ids": [str(holder.pk)], "field_key": parsed.field_key})
 
-    elif parsed.action == "list_documents":
-        _send_list(member)
-
     elif parsed.action == "delete_document":
         if not documents:
             client.send_text(member.wa_id, replies.NOT_FOUND)
@@ -296,11 +333,11 @@ def _run_intent(member: Member, parsed: intent.Intent):
             rows = [(f"delask:{d.pk}", d.title, _describe(d)) for d in documents]
             client.send_list(member.wa_id, "Which one should I delete?", "Choose", rows)
 
-    elif parsed.action == "help":
-        client.send_text(member.wa_id, replies.help_text())
+    elif parsed.reply:
+        client.send_text(member.wa_id, parsed.reply)
 
     else:
-        client.send_text(member.wa_id, parsed.reply or replies.help_text())
+        send_menu(member, replies.help_text())
 
 
 def _handle_choice(member: Member, choice: str):
@@ -340,10 +377,45 @@ def _handle_choice(member: Member, choice: str):
         perform(member, {"op": "wipe"})
     elif kind == "buy":
         _buy(member, rest)
+    elif kind == "menu" and rest in replies.MENU_ACTIONS:
+        run_command(member, commands.Command(rest))
+    elif kind == "pair":
+        _choose_card(member, rest)
+    elif kind == "unpair":
+        _not_this_card(member, rest)
     elif kind == "cancel":
         client.send_text(member.wa_id, replies.CANCELLED)
     else:
-        client.send_text(member.wa_id, replies.help_text())
+        send_menu(member, replies.help_text())
+
+
+def _choose_card(member: Member, choice: str):
+    """They picked which card a front or back belongs to ("<doc>:<other side>" or "<doc>:new")."""
+    client = get_client()
+    doc_id, _, partner_id = choice.partition(":")
+    found = services.owned_documents(member, [doc_id])
+    if not found:
+        client.send_text(member.wa_id, replies.NOT_FOUND)
+    elif partner_id == "new":
+        client.send_text(member.wa_id, replies.kept_as_new_card(found[0]))
+    elif partner := services.pair_documents(member, doc_id, partner_id):
+        client.send_text(member.wa_id, replies.paired(found[0], partner))
+    else:
+        client.send_text(member.wa_id, replies.PAIR_FAILED)
+
+
+def _not_this_card(member: Member, doc_id: str):
+    """Undo a join Kagaz wasn't sure about, then offer the other possible cards."""
+    client = get_client()
+    result = services.unpair(member, doc_id)
+    if result is None:
+        client.send_text(member.wa_id, replies.CANCELLED)
+        return
+    document, former = result
+    choices = services.pair_choices(document, exclude=[former.pk] if former else [])
+    client.send_text(member.wa_id, replies.unpaired(document, choices_follow=bool(choices)))
+    if choices:
+        ask_which_card(member, document, choices)
 
 
 # --- Delivery rules ---------------------------------------------------------
@@ -450,6 +522,15 @@ def _describe(document: Document) -> str:
     if details.get("holder_name"):
         parts.append(details["holder_name"])
     parts.append(f"saved {timezone.localtime(document.created_at):%d %b %Y}")
+    return " · ".join(parts)
+
+
+def _describe_side(document: Document) -> str:
+    """For "which card?" lists: "Front · Asha Verma · saved 26 Oct, 10:42"."""
+    parts = [document.get_side_display()]
+    if holder := document.get_details().get("holder_name"):
+        parts.append(holder)
+    parts.append(f"saved {timezone.localtime(document.created_at):%d %b, %H:%M}")
     return " · ".join(parts)
 
 

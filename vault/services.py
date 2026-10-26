@@ -14,7 +14,7 @@ from accounts.models import Member
 from core import crypto
 from core.llm import LLMError
 from vault import conversions, extraction
-from vault.models import LABEL_CHOICES, SENSITIVE_CATEGORIES, Category, Conversion, Document
+from vault.models import LABEL_CHOICES, PROTECTED_FIELD_WORDS, SENSITIVE_CATEGORIES, Category, Conversion, Document
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class ReadResult:
     retrying: bool = False  # The AI was busy; it will be read again later.
     unclear: bool = False  # Read, but the AI couldn't tell what kind of document it is.
     partner: Document | None = None  # The other side of the same card, if just matched.
+    sure: bool = True  # False when the partner was the only candidate, not a proven match.
+    choices: list[Document] = field(default_factory=list)  # Possible other sides to ask about.
 
     @property
     def needs_label(self) -> bool:
@@ -124,8 +126,11 @@ def read_document(document: Document, data: bytes) -> ReadResult:
         "read_problem": "",
     })
     document.save()
-    partner = pair_card_side(document)
-    return ReadResult(unclear=not found["recognised"] and not current.get("labelled_by_user"), partner=partner)
+    pairing = pair_card_side(document)
+    return ReadResult(
+        unclear=not found["recognised"] and not current.get("labelled_by_user"),
+        partner=pairing.partner, sure=pairing.sure, choices=pairing.choices,
+    )
 
 
 def _could_not_read(document: Document, problem: str, busy: bool) -> ReadResult:
@@ -146,24 +151,35 @@ def _could_not_read(document: Document, problem: str, busy: bool) -> ReadResult:
     return ReadResult(problem=problem, retrying=retrying)
 
 
-def reread_due_documents(limit: int = 20, now: bool = False) -> list[tuple[Document, str]]:
+def reread_due_documents(
+    limit: int = 20, now: bool = False, include_failed: bool = False
+) -> list[tuple[Document, str, ReadResult]]:
     """Try the AI again on documents it skipped while busy.
 
-    `now=True` ignores the waiting schedule. Returns (document, title before)
-    for each one read now.
+    `now=True` ignores the waiting schedule. `include_failed=True` also retries
+    documents that gave up because the AI stayed unavailable (e.g. no credits).
+    Returns (document, title before, result) for each one read now.
     """
     done = []
     due = Document.objects.filter(status=Document.Status.WAITING)
     if not now:
         due = due.filter(next_read_at__lte=timezone.now())
-    due = due.select_related("member").order_by("next_read_at")[:limit]
+    due = list(due.select_related("member").order_by("next_read_at")[:limit])
+    if include_failed:
+        gave_up = Document.objects.filter(status=Document.Status.UNREADABLE).select_related("member")
+        for document in gave_up:
+            if len(due) >= limit:
+                break
+            if document.get_details().get("read_problem") == "busy":
+                document.read_attempts = 0  # A fresh set of retries if the AI is still busy.
+                due.append(document)
     for document in due:
         title_before = document.title
         outcome = read_document(document, document.read_file())
         if outcome.retrying:
             break  # Still busy: try the rest later.
         if not outcome.problem:
-            done.append((document, title_before))
+            done.append((document, title_before, outcome))
     return done
 
 
@@ -186,34 +202,131 @@ def label_document(document: Document, category: str):
 # --- Two-sided cards --------------------------------------------------------
 
 
+# At most this many cards are offered in a "which card is this?" list (WhatsApp shows 10 rows).
+MAX_PAIR_CHOICES = 9
+OPPOSITE_SIDE = {Document.Side.FRONT: Document.Side.BACK, Document.Side.BACK: Document.Side.FRONT}
+MASKED = re.compile(r"(x|\*){4,}")
+
+
+@dataclass
+class Pairing:
+    partner: Document | None = None
+    sure: bool = True
+    choices: list[Document] = field(default_factory=list)
+
+
 def _holder(document: Document) -> str:
     return " ".join((document.get_details().get("holder_name") or "").lower().split())
 
 
-def pair_card_side(document: Document) -> Document | None:
-    """Join a card's front and back photos, so they're always sent together."""
-    opposite = {Document.Side.FRONT: Document.Side.BACK, Document.Side.BACK: Document.Side.FRONT}.get(document.side)
-    if not opposite or document.card_group:
-        return None
-    candidates = list(
-        document.member.documents.filter(category=document.category, side=opposite, card_group__isnull=True)
-        .exclude(pk=document.pk)
-        .order_by("-created_at")
+def _id_numbers(document: Document) -> list[str]:
+    """ID numbers printed on the card, letters and digits only ("1234 5678 9012" -> "123456789012")."""
+    numbers = []
+    for found in document.get_details().get("fields", []):
+        key_words = set(found.get("key", "").split("_"))
+        if found.get("sensitive") or PROTECTED_FIELD_WORDS & key_words:
+            value = re.sub(r"[^0-9a-z*]", "", str(found.get("value", "")).lower())
+            if sum(c.isdigit() for c in value) >= 4:
+                numbers.append(value)
+    return numbers
+
+
+def _same_number(a: str, b: str) -> bool:
+    if MASKED.search(a) or MASKED.search(b):
+        # Masked, like XXXX XXXX 9012 on an Aadhaar back: compare the last 4 digits.
+        tail_a, tail_b = re.sub(r"\D", "", a)[-4:], re.sub(r"\D", "", b)[-4:]
+        return len(tail_a) == 4 and tail_a == tail_b
+    return a == b
+
+
+def _numbers_match(mine: list[str], theirs: list[str]) -> bool:
+    return any(_same_number(a, b) for a in mine for b in theirs)
+
+
+def _pair_candidates(document: Document) -> list[Document]:
+    """Unpaired opposite sides of the same kind of card, newest first."""
+    return list(
+        document.member.documents.filter(
+            category=document.category, side=OPPOSITE_SIDE[document.side], card_group__isnull=True
+        ).exclude(pk=document.pk).order_by("-created_at")
     )
+
+
+def _match_candidates(document: Document, candidates: list[Document]) -> tuple[Document | None, list[Document]]:
+    """(the side that surely belongs with it, or None; the sides it could still belong with)."""
+    numbers = _id_numbers(document)
+    if numbers:
+        same = [c for c in candidates if _numbers_match(numbers, _id_numbers(c))]
+        if len(same) == 1:
+            return same[0], []
+        # A side showing a different ID number is a different card.
+        candidates = [c for c in candidates if not _id_numbers(c) or c in same]
     name = _holder(document)
     if name:
         same_name = [c for c in candidates if _holder(c) == name]
-        no_name = [c for c in candidates if not _holder(c)]  # Backs often have no name.
-        partner = same_name[0] if same_name else (no_name[0] if len(no_name) == 1 else None)
-    else:
-        partner = candidates[0] if len(candidates) == 1 else None
-    if partner is None:
-        return None  # Not sure which card it belongs to: don't guess.
+        if len(same_name) == 1:
+            return same_name[0], []
+        candidates = same_name or [c for c in candidates if not _holder(c)]  # Backs often have no name.
+    return None, candidates
 
+
+def _join(document: Document, partner: Document, sure: bool) -> Pairing:
     group = uuid.uuid4()
     Document.objects.filter(pk__in=[document.pk, partner.pk]).update(card_group=group)
     document.card_group = partner.card_group = group
+    return Pairing(partner=partner, sure=sure)
+
+
+def pair_card_side(document: Document) -> Pairing:
+    """Join a card's front and back photos, so they're always sent together.
+
+    Proven by the same ID number or name: joined. The only possible match:
+    joined, but not sure (the owner can undo it). Several possible: not
+    joined; the owner is asked which card it belongs to.
+    """
+    if document.side not in OPPOSITE_SIDE or document.card_group:
+        return Pairing()
+    certain, possible = _match_candidates(document, _pair_candidates(document))
+    if certain:
+        return _join(document, certain, sure=True)
+    if len(possible) == 1:
+        return _join(document, possible[0], sure=False)
+    return Pairing(choices=possible[:MAX_PAIR_CHOICES])
+
+
+def pair_choices(document: Document, exclude=()) -> list[Document]:
+    """The sides this one could belong with, for asking the owner (never joins by itself)."""
+    if document.side not in OPPOSITE_SIDE or document.card_group:
+        return []
+    excluded = set(exclude)
+    candidates = [c for c in _pair_candidates(document) if c.pk not in excluded]
+    certain, possible = _match_candidates(document, candidates)
+    return ([certain] if certain else possible)[:MAX_PAIR_CHOICES]
+
+
+def pair_documents(member: Member, doc_id, partner_id) -> Document | None:
+    """The owner says these two are one card's sides. Returns the partner, or None if they can't be."""
+    found = owned_documents(member, [doc_id, partner_id])
+    if len(found) != 2:
+        return None
+    document, partner = found
+    if (document.category != partner.category or OPPOSITE_SIDE.get(document.side) != partner.side
+            or document.card_group or partner.card_group):
+        return None
+    _join(document, partner, sure=True)
     return partner
+
+
+def unpair(member: Member, doc_id) -> tuple[Document, Document | None] | None:
+    """The owner says two joined sides aren't one card. Returns (document, its former partner)."""
+    found = owned_documents(member, [doc_id])
+    if not found or not found[0].card_group:
+        return None
+    document = found[0]
+    partner = member.documents.filter(card_group=document.card_group).exclude(pk=document.pk).first()
+    Document.objects.filter(card_group=document.card_group).update(card_group=None)
+    document.card_group = None
+    return document, partner
 
 
 def _side_order(document: Document) -> int:

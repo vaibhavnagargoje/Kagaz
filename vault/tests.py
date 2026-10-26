@@ -129,6 +129,48 @@ class WebChatTests(KagazTestCase):
             response = self.client.post(reverse("vault:upload"), {"file": upload})
         self.assertRedirects(response, reverse("vault:home"))
 
+    def upload_card(self, side, holder, name):
+        result = extraction_result(category="pan", title="PAN Card", side=side, holder_name=holder)
+        upload = SimpleUploadedFile(name, make_jpeg(800, 500, text=name), content_type="image/jpeg")
+        with mock.patch("vault.extraction.structured_call", return_value=result):
+            return self.client.post(reverse("vault:upload"), {"file": upload}, headers=FETCH)
+
+    def test_web_upload_asks_which_card_and_a_chip_joins_them(self):
+        self.upload_card("front", "Vaibhav Nagargoje", "mine.jpg")
+        self.upload_card("front", "Sundardas Nagargoje", "father.jpg")
+        answer = self.upload_card("back", "", "back.jpg")
+        self.assertContains(answer, "Which card is it from?")
+        self.assertContains(answer, "Vaibhav Nagargoje")
+        self.assertContains(answer, 'data-value="new"')
+
+        back = Document.objects.get(side="back")
+        mine = next(d for d in Document.objects.filter(side="front") if "Vaibhav" in d.get_details()["holder_name"])
+        self.assertContains(self.tap("pair", back, value=str(mine.pk)), "are joined")
+        back.refresh_from_db()
+        mine.refresh_from_db()
+        self.assertEqual(back.card_group, mine.card_group)
+        self.assertNotContains(self.client.get(reverse("vault:home")), 'data-value="new"')  # Question answered.
+
+    def test_web_not_this_card(self):
+        self.upload_card("front", "Vaibhav Nagargoje", "mine.jpg")
+        answer = self.upload_card("back", "", "back.jpg")
+        self.assertContains(answer, "Not this card")
+        back = Document.objects.get(side="back")
+        self.assertContains(self.tap("unpair", back, label="Not this card"), "separated them")
+        back.refresh_from_db()
+        self.assertIsNone(back.card_group)
+
+    def test_web_understands_the_same_commands(self):
+        self.save_doc(self.member, title="CBSE Class 12 Marksheet")
+        with mock.patch("bot.intent.structured_call", side_effect=LLMError("402")) as ai:
+            self.assertContains(self.client.post(reverse("vault:send"), {"text": "show my document list"}, headers=FETCH),
+                                "Your documents (1")
+            self.assertContains(self.client.post(reverse("vault:send"), {"text": "kitne documents hai"}, headers=FETCH),
+                                "You have 1 document saved")
+            self.assertContains(self.client.post(reverse("vault:send"), {"text": "upgrde"}, headers=FETCH),
+                                "on WhatsApp")
+        ai.assert_not_called()
+
     def test_empty_upload_is_explained(self):
         self.assertContains(self.client.post(reverse("vault:upload"), {}, headers=FETCH), "choose a PDF or photo")
 
@@ -353,6 +395,54 @@ class CardSideTests(KagazTestCase):
         back.refresh_from_db()
         self.assertIsNone(back.card_group)
 
+    def test_same_id_number_pairs_even_with_several_fronts(self):
+        number = lambda value: [{"key": "aadhaar_number", "label": "Aadhaar number", "value": value, "sensitive": True}]
+        mine = self.save_doc(self.member, data=make_jpeg(800, 500, text="f1"), mime="image/jpeg", category="aadhaar",
+                             title="Aadhaar Card", side="front", fields=number("1234 5678 9012"))
+        self.save_doc(self.member, data=make_jpeg(800, 500, text="f2"), mime="image/jpeg", category="aadhaar",
+                      title="Aadhaar Card", side="front", holder_name="Ravi Verma", fields=number("5555 6666 7777"))
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result(
+                category="aadhaar", title="Aadhaar Card", side="back", holder_name="", fields=number("XXXX XXXX 9012"))):
+            result = services.save_document(self.member, make_jpeg(800, 500, text="b"), "image/jpeg")
+        self.assertEqual(result.read.partner, mine)
+        self.assertTrue(result.read.sure)
+
+    def test_a_different_id_number_is_never_joined(self):
+        number = lambda value: [{"key": "aadhaar_number", "label": "Aadhaar number", "value": value, "sensitive": True}]
+        front = self.save_doc(self.member, data=make_jpeg(800, 500, text="f"), mime="image/jpeg", category="aadhaar",
+                              title="Aadhaar Card", side="front", fields=number("1234 5678 9012"))
+        self.save_doc(self.member, data=make_jpeg(800, 500, text="b"), mime="image/jpeg", category="aadhaar",
+                      title="Aadhaar Card", side="back", holder_name="", fields=number("XXXX XXXX 4444"))
+        front.refresh_from_db()
+        self.assertIsNone(front.card_group)
+
+    def test_only_candidate_is_joined_but_not_sure(self):
+        self.card("front")
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result(
+                category="aadhaar", title="Aadhaar Card", side="back", holder_name="")):
+            result = services.save_document(self.member, make_jpeg(800, 500, text="b"), "image/jpeg")
+        self.assertIsNotNone(result.read.partner)
+        self.assertFalse(result.read.sure)
+
+    def test_two_possible_fronts_become_choices(self):
+        self.card("front", holder="Asha Verma")
+        self.card("front", holder="Ravi Verma")
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result(
+                category="aadhaar", title="Aadhaar Card", side="back", holder_name="")):
+            result = services.save_document(self.member, make_jpeg(800, 500, text="b"), "image/jpeg")
+        self.assertIsNone(result.read.partner)
+        self.assertEqual(len(result.read.choices), 2)
+
+    def test_pairing_rules_for_the_owners_choice(self):
+        front = self.card("front", category="pan", title="PAN Card")
+        back = self.card("back", category="aadhaar", title="Aadhaar Card", holder="")
+        self.assertIsNone(services.pair_documents(self.member, back.pk, front.pk))  # Different kinds of card.
+        aadhaar_front = self.card("front")  # Joined with the only possible back, but not sure.
+        self.assertIsNone(services.pair_documents(self.member, back.pk, aadhaar_front.pk))  # Already joined.
+        _, former = services.unpair(self.member, back.pk)
+        self.assertEqual(former, aadhaar_front)
+        self.assertEqual(services.pair_documents(self.member, back.pk, aadhaar_front.pk), aadhaar_front)
+
     def test_both_sides_go_on_one_page(self):
         front, back = self.card("front"), self.card("back", holder="")
         documents = services.with_card_sides([Document.objects.get(pk=front.pk)])
@@ -410,6 +500,19 @@ class RereadTests(KagazTestCase):
         with mock.patch("vault.extraction.structured_call", side_effect=LLMError("busy")):
             services.reread_due_documents()
         self.assertEqual(Document.objects.get(pk=self.document.pk).status, Document.Status.UNREADABLE)
+
+    def test_documents_that_gave_up_can_be_read_again(self):
+        Document.objects.filter(pk=self.document.pk).update(read_attempts=len(services.REREAD_DELAYS_MINUTES))
+        self.make_due()
+        with mock.patch("vault.extraction.structured_call", side_effect=LLMError("402")):
+            services.reread_due_documents()
+        self.assertEqual(Document.objects.get(pk=self.document.pk).status, Document.Status.UNREADABLE)
+
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result()):
+            self.assertEqual(services.reread_due_documents(now=True), [])  # Only with the flag.
+            done = services.reread_due_documents(now=True, include_failed=True)
+        self.assertEqual(len(done), 1)
+        self.assertEqual(Document.objects.get(pk=self.document.pk).status, Document.Status.READY)
 
     def test_people_chatting_recently_are_told(self):
         from bot.tasks import reread_and_notify

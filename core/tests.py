@@ -38,6 +38,13 @@ class GeminiTests(SimpleTestCase):
         with patcher, self.assertRaisesMessage(llm.LLMError, "usage limit"):
             llm.structured_call(system="", parts=["hi"], schema=SCHEMA)
 
+    def test_used_up_credits_say_so(self):
+        error = gemini_errors.ClientError(402, {"error": {"code": 402, "message": "Your prepayment credits are depleted."}})
+        patcher, _ = self.fake_client(side_effect=error)
+        with patcher, self.assertLogs("core.llm", "ERROR") as logs, self.assertRaisesMessage(llm.LLMError, "credits"):
+            llm.structured_call(system="", parts=["hi"], schema=SCHEMA)
+        self.assertIn("aistudio.google.com/billing", logs.output[0])
+
     def test_blocked_answer_is_an_error(self):
         patcher, _ = self.fake_client(return_value=SimpleNamespace(text=None))
         with patcher, self.assertRaises(llm.LLMError):

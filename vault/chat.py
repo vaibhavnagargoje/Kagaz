@@ -14,7 +14,7 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
-from bot import handlers, intent, replies, tasks
+from bot import commands, handlers, intent, replies, tasks
 from core.llm import LLMError
 from vault import services
 from vault.conversions import SendOptions
@@ -32,6 +32,7 @@ ON_WHATSAPP_PIN = "To set or change your PIN, type PIN in your Kagaz chat on Wha
 ON_WHATSAPP_FORGOT = "To reset a forgotten PIN, type FORGOT PIN in your Kagaz chat on WhatsApp."
 ON_WHATSAPP_WIPE = "To erase everything, type DELETE MY DATA in your Kagaz chat on WhatsApp."
 ON_WHATSAPP_PLANS = "Plans, codes and invites are in your Kagaz chat on WhatsApp: type PLUS, PLAN or REFER there."
+ALREADY_ON_WEB = "You're already using Kagaz on the web 🙂 Ask for any document, or for “my documents”."
 FROM_WHATSAPP = "Here's what you asked for on WhatsApp."
 
 EXAMPLES = [
@@ -89,20 +90,9 @@ def clear(request):
 
 
 def reply_to_text(member, text: str) -> list[dict]:
-    command = " ".join(text.lower().split()).strip(" .!")
-    if command in handlers.LIST_WORDS:
-        return [bot("list")]
-    if command in handlers.HELP_WORDS:
-        return [bot("help")]
-    if command in handlers.PIN_WORDS:
-        return [bot_text(ON_WHATSAPP_PIN)]
-    if command in handlers.FORGOT_WORDS | handlers.CANCEL_RESET_WORDS:
-        return [bot_text(ON_WHATSAPP_FORGOT)]
-    if command in handlers.WIPE_WORDS:
-        return [bot_text(ON_WHATSAPP_WIPE)]
-    if (command in handlers.PLUS_WORDS | handlers.PLAN_WORDS | handlers.REFER_WORDS
-            or handlers.CODE_COMMAND.match(command) or handlers.REFERRAL_COMMAND.match(command)):
-        return [bot_text(ON_WHATSAPP_PLANS)]
+    command = handlers.command_for(text)
+    if command:
+        return _reply_to_command(member, command)
 
     documents = list(member.documents.exclude(status=Document.Status.PROCESSING)[: intent.MAX_CATALOG])
     if not documents:
@@ -116,9 +106,32 @@ def reply_to_text(member, text: str) -> list[dict]:
     try:
         parsed = intent.parse(text, documents)
     except LLMError:
-        # The AI is down or out of quota.
+        # The AI is down or out of credits.
+        member.refund_question()
         return _search_by_name(text, documents, found=AI_BUSY_FOUND, nothing=AI_BUSY_NOTHING)
-    return _reply_to_intent(parsed)
+    return _reply_to_intent(member, parsed)
+
+
+def _reply_to_command(member, command: commands.Command) -> list[dict]:
+    """The web version of a command: some of them live in the WhatsApp chat."""
+    action = command.action
+    if action == "list":
+        return [bot("list")]
+    if action == "count":
+        return [bot_text(replies.document_count(member.documents.count(), on_web=True))]
+    if action == "pin":
+        return [bot_text(ON_WHATSAPP_PIN)]
+    if action in ("forgot_pin", "cancel_reset"):
+        return [bot_text(ON_WHATSAPP_FORGOT)]
+    if action == "wipe":
+        return [bot_text(ON_WHATSAPP_WIPE)]
+    if action == "web":
+        return [bot_text(ALREADY_ON_WEB)]
+    if action == "privacy":
+        return [bot_text(f"How Kagaz keeps your documents safe: {replies.privacy_url()}")]
+    if action in ("plus", "plan", "refer", "code", "friend_code"):
+        return [bot_text(ON_WHATSAPP_PLANS)]
+    return [bot("help")]
 
 
 def _search_by_name(text: str, documents, found: str, nothing: str) -> list[dict]:
@@ -130,7 +143,10 @@ def _search_by_name(text: str, documents, found: str, nothing: str) -> list[dict
     return [bot("docs", doc_ids=_ids(cards), note=found, choose=len(cards) > 1)]
 
 
-def _reply_to_intent(parsed: intent.Intent) -> list[dict]:
+def _reply_to_intent(member, parsed: intent.Intent) -> list[dict]:
+    if parsed.action in intent.APP_ACTIONS:
+        return _reply_to_command(member, commands.Command(intent.APP_ACTIONS[parsed.action]))
+
     if parsed.action == "send_document":
         cards = services.one_per_card(parsed.documents)  # A card's two sides count as one.
         if not cards:
@@ -146,11 +162,9 @@ def _reply_to_intent(parsed: intent.Intent) -> list[dict]:
             return [bot("docs", doc_ids=_ids(parsed.documents[:1]), note="I couldn't find that detail, but here's the document.")]
         return [bot_text(NOT_FOUND)]
 
-    if parsed.action == "list_documents":
-        return [bot("list")]
     if parsed.action == "delete_document":
         return [bot("confirm_delete", doc_ids=_ids(parsed.documents))] if parsed.documents else [bot_text(NOT_FOUND)]
-    if parsed.action == "help" or not parsed.reply:
+    if not parsed.reply:
         return [bot("help")]
     return [bot_text(parsed.reply)]
 
@@ -171,6 +185,20 @@ def reply_to_action(member, action: str, data) -> list[dict]:
 
     if action == "show":
         return [bot("docs", doc_ids=[str(document.pk)])]
+
+    if action == "pair":
+        if data.get("value") == "new":
+            return [bot_text(replies.kept_as_new_card(document).replace("*", ""))]
+        partner = services.pair_documents(member, document.pk, data.get("value", ""))
+        return [bot_text(replies.paired(document, partner).replace("*", "") if partner else replies.PAIR_FAILED)]
+
+    if action == "unpair":
+        result = services.unpair(member, document.pk)
+        if result is None:
+            return [bot_text("Okay, they're already separate.")]
+        document, former = result
+        choices = services.pair_choices(document, exclude=[former.pk] if former else [])
+        return [bot("saved", doc_id=str(document.pk), separated=True, pair_choices=_ids(choices))]
 
     if action == "label":
         labels = dict(LABEL_CHOICES)
@@ -198,6 +226,7 @@ def reply_to_upload(result) -> list[dict]:
     return [bot(
         "saved", doc_id=str(result.document.pk), duplicate=result.duplicate, retrying=read.retrying,
         problem=read.problem, unclear=read.unclear, partner_side=read.partner.side if read.partner else "",
+        pair_unsure=bool(read.partner) and not read.sure, pair_choices=_ids(read.choices),
     )]
 
 
@@ -262,13 +291,22 @@ def _present(member, entry: dict, unlocked: bool) -> dict:
             "card": card([document], SendOptions(), unlocked),
         }
     if kind == "saved":
+        pair_options = []
+        if not document.card_group and entry.get("pair_choices"):
+            pair_options = [
+                {"id": str(d.pk), "label": _pair_label(d)}
+                for d in services.owned_documents(member, entry["pair_choices"]) if not d.card_group
+            ]
         return {
             "card": card([document], SendOptions(), unlocked),
-            "lines": _saved_lines(document, entry),
+            "lines": _saved_lines(document, entry, asking_pair=bool(pair_options)),
             "duplicate": entry.get("duplicate", False),
-            "ask_label": document.needs_label and not entry.get("duplicate"),
+            "separated": entry.get("separated", False),
+            "ask_label": document.needs_label and not entry.get("duplicate") and not entry.get("separated"),
             "document": document,
             "label_choices": LABEL_CHOICES,
+            "pair_options": pair_options,
+            "can_unpair": bool(document.card_group) and entry.get("pair_unsure", False),
         }
     if kind == "labelled":
         text = f"Got it: saved as {entry.get('label', '')}."
@@ -300,7 +338,18 @@ def _intro(cards: list[dict], choose: bool) -> str:
     return "Here they are."
 
 
-def _saved_lines(document: Document, entry: dict) -> list[str]:
+def _pair_label(document: Document) -> str:
+    """A chip naming a card side: "Aadhaar Card · front · Asha Verma"."""
+    holder = document.get_details().get("holder_name")
+    return f"{document.list_label} · {holder or f'saved {timezone.localtime(document.created_at):%d %b, %H:%M}'}"
+
+
+def _saved_lines(document: Document, entry: dict, asking_pair: bool = False) -> list[str]:
+    other = replies.other_side(document.side)
+    if entry.get("separated"):
+        if asking_pair:
+            return ["Okay, I've separated them. Which card is it from?"]
+        return [f"Okay, I've separated them. Add the right {other} side and I'll join it."]
     lines = []
     if entry.get("duplicate"):
         lines.append("You've already saved this one.")
@@ -314,10 +363,15 @@ def _saved_lines(document: Document, entry: dict) -> list[str]:
         labels = [f["label"] for f in document.get_details().get("fields", [])][:6]
         if labels:
             lines.append("I can tell you: " + ", ".join(labels) + ".")
-    if entry.get("partner_side"):
-        lines.append(f"Matched with the {entry['partner_side']} side you saved earlier. Both sides stay together.")
+    if entry.get("partner_side") and document.card_group:
+        if entry.get("pair_unsure"):
+            lines.append(f"Joined with the {entry['partner_side']} side you saved earlier, so both sides stay "
+                         "together. Wrong card? Tap “Not this card”.")
+        else:
+            lines.append(f"Matched with the {entry['partner_side']} side you saved earlier. Both sides stay together.")
+    elif asking_pair:
+        lines.append(f"I have more than one {document.title} {other} it could go with. Which card is it from?")
     elif document.side in (Document.Side.FRONT, Document.Side.BACK) and not document.card_group:
-        other = "back" if document.side == Document.Side.FRONT else "front"
         lines.append(f"If it has a {other} side, add that too and I'll keep them together.")
     if document.is_sensitive:
         lines.append("Protected: it opens only after your PIN.")

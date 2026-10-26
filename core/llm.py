@@ -88,6 +88,9 @@ def _ask_gemini(system: str, parts: list[str | File], schema: dict) -> str:
             ),
         )
     except errors.APIError as exc:
+        if exc.code == 402:
+            logger.error("Gemini credits are used up (402): top up at aistudio.google.com/billing")
+            raise LLMError("Gemini credits are used up (402).") from exc
         logger.error("Gemini request failed: status=%s", exc.code)
         if exc.code == 429:
             raise LLMError("Gemini usage limit reached (free tier has a daily cap).") from exc
