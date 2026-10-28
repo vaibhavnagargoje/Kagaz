@@ -96,16 +96,21 @@ def upload(request):
     upload = request.FILES.get("file")
     mine = [chat.me_file(upload.name)] if upload else []
     if upload is None or upload.size > MAX_UPLOAD_BYTES:
-        answer = [chat.bot_text(f"Please choose a PDF or photo up to {MAX_UPLOAD_MB} MB.")]
+        answer = [chat.bot_text(f"Please choose a PDF, photo or Word file up to {MAX_UPLOAD_MB} MB.")]
     elif not member.can_add_document():
         answer = [chat.bot_text(
             f"Your free plan holds {member.limits()['documents']} documents and it's full. "
             "Delete one you don't need to make room, or type PLUS on WhatsApp for unlimited storage."
         )]
+    elif not member.use_upload():
+        answer = [chat.bot_text(replies.upload_limit(member.limits()["uploads_per_day"]))]
     else:
-        data = upload.read()
-        mime = conversions.detect_mime(data, fallback=upload.content_type or "application/octet-stream")
-        answer = chat.reply_to_upload(services.save_document(member, data, mime, filename=upload.name))
+        try:
+            # The browser's claimed type is only a hint; save_document checks the bytes.
+            result = services.save_document(member, upload.read(), upload.content_type or "", filename=upload.name)
+            answer = chat.reply_to_upload(result)
+        except services.RefusedFile as exc:
+            answer = [chat.bot_text(str(exc))]
 
     chat.add(request, *mine)
     added = chat.add(request, *answer)
@@ -230,6 +235,7 @@ def document_detail(request, doc_id):
         "unlocked": unlocked,
         "unlock_minutes": UNLOCK_MINUTES,
         "can_preview": document.mime_type in PREVIEW_TYPES,
+        "is_word": conversions.is_word(document.mime_type),
         "size_kb": max(1, round(document.size_bytes / 1024)),
         "unlock_url": _unlock_url(request.path),
         "sides": sides if len(sides) == 2 else None,
@@ -246,7 +252,8 @@ def preview(request, doc_id):
     if document.is_sensitive and not member.is_unlocked():
         return HttpResponseForbidden()
     try:
-        jpeg = conversions.preview_jpeg(document.read_file(), document.mime_type)
+        with conversions.HEAVY_WORK:
+            jpeg = conversions.preview_jpeg(document.read_file(), document.mime_type)
     except ConversionError:
         raise Http404
     return HttpResponse(jpeg, content_type="image/jpeg")

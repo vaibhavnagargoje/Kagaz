@@ -88,8 +88,8 @@
     </form>
     <form method="post" action="{% url 'vault:upload' %}" enctype="multipart/form-data" data-upload>
       {% csrf_token %}
-      <input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp" data-file hidden>
-      <noscript><input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp"><button type="submit">Upload</button></noscript>
+      <input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp,.heic,.heif,.docx" data-file hidden>
+      <noscript><input type="file" name="file" accept=".pdf,image/jpeg,image/png,image/webp,.heic,.heif,.docx"><button type="submit">Upload</button></noscript>
     </form>
   </footer>
 </div>

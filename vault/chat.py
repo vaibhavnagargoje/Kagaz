@@ -17,7 +17,7 @@ from django.utils import timezone
 from bot import commands, handlers, intent, replies, tasks
 from core.llm import LLMError
 from vault import services
-from vault.conversions import SendOptions
+from vault.conversions import DOCX, SendOptions
 from vault.models import LABEL_CHOICES, Document
 
 HISTORY_KEY = "kagaz_chat"
@@ -42,9 +42,11 @@ EXAMPLES = [
     "10th and 12th in one PDF",
     "my photo 200x230 px under 50 KB",
     "aadhaar back side only",
+    "my electricity consumer number",
 ]
 
-KINDS = {"application/pdf": "PDF", "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WEBP"}
+KINDS = {"application/pdf": "PDF", "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WEBP", DOCX: "DOCX"}
+TONES = {"PDF": "pdf", "DOCX": "doc", "FILE": "file"}
 
 
 def bot(kind: str, **data) -> dict:
@@ -152,7 +154,10 @@ def _reply_to_intent(member, parsed: intent.Intent) -> list[dict]:
         if not cards:
             return [bot_text(NOT_FOUND)]
         choose = len(cards) > 1 and not (parsed.send_all or parsed.options.merge)
-        return [bot("docs", doc_ids=_ids(cards), options=asdict(parsed.options), side=parsed.side, choose=choose)]
+        return [
+            bot("docs", doc_ids=_ids(cards), options=asdict(parsed.options), side=parsed.side, choose=choose),
+            *(bot_text(note) for note in parsed.options.notes),  # E.g. a size too big to make.
+        ]
 
     if parsed.action == "ask_field":
         holder = next((d for d in parsed.documents if parsed.field_key and d.get_field(parsed.field_key)), None)
@@ -235,8 +240,11 @@ def from_whatsapp_link(action: dict) -> list[dict]:
     if action.get("op") == "field":
         doc_ids = action.get("doc_ids", [])
         return [bot("field", doc_id=doc_ids[0] if doc_ids else "", field_key=action.get("field_key", ""), note=FROM_WHATSAPP)]
-    return [bot("docs", doc_ids=action.get("doc_ids", []), options=action.get("options", {}),
-                side=action.get("side", ""), note=FROM_WHATSAPP)]
+    options = action.get("options") or {}
+    return [
+        bot("docs", doc_ids=action.get("doc_ids", []), options=options, side=action.get("side", ""), note=FROM_WHATSAPP),
+        *(bot_text(note) for note in options.get("notes", [])),
+    ]
 
 
 # --- Showing ----------------------------------------------------------------
@@ -396,7 +404,7 @@ def card(group: list[Document], options: SendOptions, unlocked: bool) -> dict:
         kind, tone, meta = "2 SIDES", "pair", "Front + back · one page"
     else:
         kind = KINDS.get(first.mime_type, "FILE")
-        tone = {"PDF": "pdf", "FILE": "file"}.get(kind, "img")
+        tone = TONES.get(kind, "img")
         parts = [kind]
         if first.page_count and first.page_count > 1:
             parts.append(f"{first.page_count} pages")
@@ -433,20 +441,12 @@ def combined_card(documents: list[Document], options: SendOptions, unlocked: boo
 
 
 def options_from(data) -> SendOptions:
-    """Size/format options from a form or a stored request, kept within sane limits."""
-    def number(name, low, high):
-        try:
-            value = int(data.get(name) or 0)
-        except (TypeError, ValueError):
-            return 0
-        return value if low <= value <= high else 0
-
-    width, height = number("width", 16, 5000), number("height", 16, 5000)
+    """Size/format options from a form or a stored request (SendOptions keeps them within limits)."""
     return SendOptions(
-        target_kb=number("target_kb", 5, 100_000),
-        fmt=data.get("fmt") if data.get("fmt") in ("pdf", "jpg") else "original",
-        width=width if height else 0,
-        height=height if width else 0,
+        target_kb=data.get("target_kb"),
+        fmt=data.get("fmt"),
+        width=data.get("width"),
+        height=data.get("height"),
         merge=data.get("merge") in (True, "1", "true", "on"),
     )
 

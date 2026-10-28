@@ -11,7 +11,7 @@ from accounts.models import PLAN_LIMITS, Member
 from bot import replies
 from bot.models import InboundMessage
 from core.llm import LLMError
-from core.testing import KagazTestCase, extraction_result, intent_result, make_jpeg, make_pdf
+from core.testing import KagazTestCase, extraction_result, intent_result, make_docx, make_jpeg, make_pdf
 from vault.models import Conversion, Document
 
 WA_ID = "919999999999"
@@ -133,6 +133,46 @@ class ConversationTests(KagazTestCase):
         sent = self.sent("document")[-1]
         self.assertEqual(sent["mime"], "image/jpeg")
         self.assertLessEqual(len(sent["data"]), 50 * 1024)
+
+    def test_size_too_big_to_make_is_explained(self):
+        member = self.make_member()
+        self.save_file(member, data=make_jpeg(), mime="image/jpeg", filename="me.jpg", category="photo", title="My photo")
+        self.ask(member, "my photo 10000x20000 px", width_px=10000, height_px=20000)
+        sent = self.sent("document")[-1]
+        self.assertEqual(sent["data"], member.documents.get().read_file())  # The original, not resized.
+        self.assertIn("biggest I can make is 5000 × 5000 px", self.last_text())
+        self.assertFalse(Conversion.objects.exists())
+
+    def test_file_type_comes_from_the_bytes(self):
+        member = self.make_member()
+        document = self.save_file(member, data=make_jpeg(), mime="application/pdf", filename="scan.pdf")
+        self.assertEqual(document.mime_type, "image/jpeg")
+
+    def test_excel_file_is_refused_politely(self):
+        member = self.make_member()
+        path = self.write_temp_file(b"PK\x03\x04 not really a workbook", "marks.xlsx")
+        self.receive_file(member.wa_id, path, "application/vnd.ms-excel", "marks.xlsx")
+        self.assertIn("Excel or PowerPoint", self.last_text())
+        self.assertFalse(Document.objects.exists())
+
+    def test_word_file_asked_as_pdf_is_sent_as_it_is(self):
+        member = self.make_member()
+        original = make_docx(paragraphs=["Asha Verma", "Curriculum Vitae"])
+        self.save_file(member, data=original, mime="application/octet-stream", filename="Resume.docx",
+                       category="other", title="Asha Verma Resume")
+        self.ask(member, "send my resume as pdf", output_format="pdf")
+        sent = self.sent("document")[-1]
+        self.assertEqual(sent["data"], original)
+        self.assertTrue(sent["filename"].endswith(".docx"))
+        self.assertIn("Save as", self.last_text())
+
+    def test_daily_upload_limit_on_whatsapp(self):
+        member = self.make_member()
+        for _ in range(PLAN_LIMITS["free"]["uploads_per_day"]):
+            member.use_upload()
+        self.save_file(member)
+        self.assertIn("files today", self.last_text())
+        self.assertFalse(Document.objects.exists())
 
     def test_sensitive_document_needs_pin_link(self):
         member = self.make_member()

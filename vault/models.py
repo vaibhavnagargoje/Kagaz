@@ -18,6 +18,7 @@ class Category(models.TextChoices):
     DRIVING_LICENCE = "driving_licence", "Driving licence"
     VOTER_ID = "voter_id", "Voter ID"
     RATION_CARD = "ration_card", "Ration card"
+    ID_CARD = "id_card", "Other ID card"
     MARKSHEET = "marksheet", "Marksheet"
     CERTIFICATE = "certificate", "Certificate"
     DEGREE = "degree", "Degree"
@@ -25,10 +26,15 @@ class Category(models.TextChoices):
     EXPERIENCE_LETTER = "experience_letter", "Experience / relieving letter"
     SALARY_SLIP = "salary_slip", "Salary slip"
     BANK = "bank", "Bank document"
+    TAX = "tax", "Tax paper"
     INSURANCE = "insurance", "Insurance"
     VEHICLE = "vehicle", "Vehicle"
-    PROPERTY = "property", "Property / rent"
+    PROPERTY = "property", "Property / house papers"
+    LAND_RECORD = "land_record", "Land record"
+    AGREEMENT = "agreement", "Agreement / legal paper"
+    BUSINESS = "business", "Business registration"
     MEDICAL = "medical", "Medical"
+    UTILITY_BILL = "utility_bill", "Light / water / gas bill"
     BILL = "bill", "Bill / receipt"
     PHOTO = "photo", "Photo"
     SIGNATURE = "signature", "Signature"
@@ -45,30 +51,43 @@ SENSITIVE_CATEGORIES = {
     Category.DRIVING_LICENCE,
     Category.VOTER_ID,
     Category.RATION_CARD,
+    Category.ID_CARD,
     Category.BANK,
     Category.SALARY_SLIP,
+    Category.TAX,
 }
 
 # What people can pick when the AI can't tell what a document is (WhatsApp
-# lists allow 10 rows). Every protected type is here, so a label can protect.
+# lists allow 10 rows). Every row that needs protection gets it ("Other ID
+# card" covers the rest of the ID cards), so a label can protect. When the AI
+# reads it later, the exact type replaces the label.
 LABEL_CHOICES = [
     (Category.AADHAAR, "Aadhaar card"),
     (Category.PAN, "PAN card"),
-    (Category.DRIVING_LICENCE, "Driving licence"),
-    (Category.PASSPORT, "Passport"),
-    (Category.VOTER_ID, "Voter ID"),
-    (Category.RATION_CARD, "Ration card"),
-    (Category.BANK, "Bank paper"),
+    (Category.ID_CARD, "Other ID card"),
+    (Category.BANK, "Bank or tax paper"),
     (Category.CERTIFICATE, "Marksheet or certificate"),
+    (Category.PROPERTY, "Property or land paper"),
+    (Category.AGREEMENT, "Agreement"),
+    (Category.UTILITY_BILL, "Light / water bill"),
     (Category.PHOTO, "Photo or signature"),
     (Category.OTHER, "Something else"),
 ]
+# Shown under a label in WhatsApp's list, where a label alone could be unclear.
+LABEL_HINTS = {
+    Category.ID_CARD: "Driving licence, passport, voter ID, ration card",
+    Category.BANK: "Passbook, statement, salary slip, ITR, Form 16",
+    Category.PROPERTY: "Sale deed, 7/12, property tax receipt",
+    Category.AGREEMENT: "Rent agreement, affidavit, NOC",
+    Category.UTILITY_BILL: "Electricity, water, gas or phone bill",
+}
 
 # A detail whose key contains one of these words is an ID or bank number, so
-# it is protected even when it's printed on an ordinary document.
+# it is protected even when it's printed on an ordinary document. (A GSTIN
+# has the owner's PAN inside it.)
 PROTECTED_FIELD_WORDS = {
     "aadhaar", "aadhar", "uid", "uidai", "pan", "passport", "licence", "license", "dl",
-    "voter", "epic", "ration", "account", "acct", "card", "upi", "iban",
+    "voter", "epic", "ration", "account", "acct", "card", "upi", "iban", "gst", "gstin",
 }
 
 

@@ -10,6 +10,8 @@ pillow~=12.3
 pypdf~=6.20
 pypdfium2~=5.14
 img2pdf~=0.6.3
+pillow-heif~=1.8.1
+defusedxml~=0.7.1
 
 # For production, also install:
 #   redis                 job queue (set REDIS_URL)

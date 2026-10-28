@@ -13,13 +13,23 @@ from django.utils import timezone
 from accounts.models import Member
 from core import crypto
 from core.llm import LLMError
-from vault import conversions, extraction
+from vault import conversions, extraction, wordfile
 from vault.models import LABEL_CHOICES, PROTECTED_FIELD_WORDS, SENSITIVE_CATEGORIES, Category, Conversion, Document
 
 logger = logging.getLogger(__name__)
 
 # When the AI is busy, read the document again after these waits (minutes).
 REREAD_DELAYS_MINUTES = [5, 15, 60, 180, 720]
+
+ACCEPTED_FILES = "I can save PDFs, photos (JPG, PNG, WEBP or iPhone HEIC) and Word .docx files."
+OFFICE_FILE = "I can't save Excel or PowerPoint files. Please save it as PDF and send it again."
+OTHER_WORD_FILE = (
+    "I can only read Word files saved as .docx. Open this one in Word or Google Docs, "
+    "save it as .docx or PDF (without a password), and send it again."
+)
+OFFICE_EXTENSIONS = {"xls", "xlsx", "xlsm", "csv", "ods", "ppt", "pptx", "pps", "ppsx", "odp"}
+WORD_EXTENSIONS = {"doc", "dot", "rtf", "odt", "wps"}
+OLE_HEADER = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # Old Office files, and password-protected new ones.
 
 # Titles that say nothing about the document (camera and scanner file names).
 GENERIC_TITLE = re.compile(
@@ -59,17 +69,71 @@ def _title_from_filename(filename: str) -> str:
     return stem[:120] or f"Saved on {timezone.localdate():%d %b %Y}"
 
 
+class RefusedFile(Exception):
+    """A file Kagaz won't save. The message is safe to show the user."""
+
+
+def _extension(filename: str) -> str:
+    return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+
+def _refusal(data: bytes, claimed: str, filename: str) -> str:
+    """Why a file of an unsupported type can't be saved, and what to send instead."""
+    extension = _extension(filename)
+    if extension in OFFICE_EXTENSIONS or any(word in claimed for word in ("spreadsheet", "excel", "presentation", "powerpoint")):
+        return OFFICE_FILE
+    if extension in WORD_EXTENSIONS or data[:8] == OLE_HEADER or claimed == "application/msword":
+        return OTHER_WORD_FILE
+    return f"{ACCEPTED_FILES} Please send it as one of these."
+
+
+def _checked(data: bytes, mime: str) -> tuple[bytes, str, int | None]:
+    """Refuse a file too big or unsafe to handle, and turn iPhone photos into JPEG.
+
+    Returns what to store, its type and its page count. Raises ConversionError.
+    """
+    if mime == conversions.HEIC:
+        with conversions.HEAVY_WORK:
+            return conversions.heic_to_jpeg(data), conversions.JPEG, None
+    if conversions.is_image(mime):
+        conversions.check_image(data)
+    elif conversions.is_word(mime):
+        wordfile.check(data)
+    elif conversions.is_pdf(mime):
+        pages = conversions.pdf_page_count(data)
+        if pages and pages > conversions.MAX_PDF_PAGES:
+            raise conversions.ConversionError(
+                f"This PDF has {pages} pages. I can save PDFs of up to {conversions.MAX_PDF_PAGES} pages, "
+                "so please split it into smaller parts."
+            )
+        return data, mime, pages
+    return data, mime, None
+
+
 def save_document(member: Member, data: bytes, mime: str, filename: str = "", caption: str = "") -> SaveResult:
-    """Encrypt and store a file, then let the AI read it."""
-    mime = mime.split(";")[0].strip().lower()
+    """Encrypt and store a file, then let the AI read it.
+
+    `mime` is only what the sender claims; the bytes decide. Raises RefusedFile
+    for files Kagaz won't keep.
+    """
+    claimed = mime.split(";")[0].strip().lower()
+    mime = conversions.detect_mime(data, fallback="")
+    if mime not in conversions.SAVEABLE_TYPES:
+        logger.info("Refused a file: claimed type %r, extension %r", claimed, _extension(filename))
+        raise RefusedFile(_refusal(data, claimed, filename))
+
     content_hash = crypto.keyed_hash(member.data_key(), data)
     existing = member.documents.filter(content_hash=content_hash).first()
     if existing:
         return SaveResult(existing, duplicate=True)
+    try:
+        data, mime, page_count = _checked(data, mime)
+    except conversions.ConversionError as exc:
+        raise RefusedFile(str(exc)) from exc
 
-    document = Document(member=member, mime_type=mime, size_bytes=len(data), content_hash=content_hash)
-    if conversions.is_pdf(mime):
-        document.page_count = conversions.pdf_page_count(data)
+    document = Document(
+        member=member, mime_type=mime, size_bytes=len(data), page_count=page_count, content_hash=content_hash
+    )
     document.store_file(data)
     document.set_details({
         "title": _title_from_filename(filename),
@@ -102,6 +166,9 @@ def read_document(document: Document, data: bytes) -> ReadResult:
     except LLMError as exc:
         logger.warning("AI could not read document %s: %s", document.pk, exc)
         return _could_not_read(document, problem="the AI service was busy", busy=True)
+    except Exception:  # Never leave a document stuck as "processing".
+        logger.exception("Reading document %s failed", document.pk)
+        return _could_not_read(document, problem="something went wrong while reading it", busy=False)
 
     category = found["category"]
     if current.get("labelled_by_user") and category == Category.OTHER:
@@ -414,15 +481,16 @@ def prepare_files(member: Member, documents: list[Document], options: conversion
 
     Both sides of a card become one page (front above back) before anything else.
     """
-    files = []
-    for group in card_groups(documents):
-        if len(group) == 2:
-            stem = group[0].download_name().rsplit(".", 1)[0]
-            sheet = conversions.card_sheet(_file_data(group[0]), _file_data(group[1]))
-            files.append(conversions.FileData(sheet, conversions.PDF, f"{stem}_both_sides.pdf"))
-        else:
-            files.extend(_file_data(d) for d in group)
-    prepared = conversions.prepare(files, options)
+    with conversions.HEAVY_WORK:
+        files = []
+        for group in card_groups(documents):
+            if len(group) == 2:
+                stem = group[0].download_name().rsplit(".", 1)[0]
+                sheet = conversions.card_sheet(_file_data(group[0]), _file_data(group[1]))
+                files.append(conversions.FileData(sheet, conversions.PDF, f"{stem}_both_sides.pdf"))
+            else:
+                files.extend(_file_data(d) for d in group)
+        prepared = conversions.prepare(files, options)
     if prepared.operations:
         if member.plan_conversions_left() == 0:
             # This month's plan conversions are used up, so this one uses a pack credit.

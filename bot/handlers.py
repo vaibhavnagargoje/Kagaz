@@ -27,7 +27,7 @@ from bot.whatsapp import FileTooLarge, WhatsAppError, get_client
 from core.llm import LLMError
 from vault import services
 from vault.conversions import ConversionError, SendOptions
-from vault.models import LABEL_CHOICES, Document
+from vault.models import LABEL_CHOICES, LABEL_HINTS, Document
 
 logger = logging.getLogger(__name__)
 
@@ -144,21 +144,27 @@ def _save(member: Member, media: dict):
     if not member.can_add_document():
         client.send_text(member.wa_id, replies.document_limit(member.limits()["documents"]))
         return
+    if not member.use_upload():
+        client.send_text(member.wa_id, replies.upload_limit(member.limits()["uploads_per_day"]))
+        return
     try:
         data, downloaded_mime = client.download_media(media["id"])
+        result = services.save_document(
+            member,
+            data,
+            media.get("mime_type") or downloaded_mime,
+            filename=media.get("filename", ""),
+            caption=media.get("caption", ""),
+        )
     except FileTooLarge:
         client.send_text(member.wa_id, replies.FILE_TOO_LARGE)
         return
-
-    result = services.save_document(
-        member,
-        data,
-        media.get("mime_type") or downloaded_mime,
-        filename=media.get("filename", ""),
-        caption=media.get("caption", ""),
-    )
-    # We have our own encrypted copy now, so ask Meta to delete theirs.
-    client.delete_media(media["id"])
+    except services.RefusedFile as exc:
+        client.send_text(member.wa_id, str(exc))
+        return
+    finally:
+        # We have our own encrypted copy now (or won't keep one), so ask Meta to delete theirs.
+        client.delete_media(media["id"])
 
     if result.duplicate:
         client.send_text(member.wa_id, replies.duplicate(result.document))
@@ -189,7 +195,7 @@ def ask_which_card(member: Member, document: Document, choices: list[Document]):
 
 def _ask_label(member: Member, document: Document, read):
     """The AI couldn't tell what this is: let the owner pick."""
-    rows = [(f"label:{document.pk}:{category}", label, "") for category, label in LABEL_CHOICES]
+    rows = [(f"label:{document.pk}:{category}", label, LABEL_HINTS.get(category, "")) for category, label in LABEL_CHOICES]
     get_client().send_list(member.wa_id, replies.label_question(document, read), "Choose type", rows)
 
 
@@ -554,8 +560,11 @@ def _decode_choice(value: str) -> tuple[str, SendOptions, str]:
 
 
 def _ask_which(member: Member, documents: list[Document], options: SendOptions, side: str = ""):
+    client = get_client()
+    for note in options.notes:  # Said now: the list rows can't carry them.
+        client.send_text(member.wa_id, note)
     rows = [(_encode_choice(d.pk, options, side), d.title, _describe(d)) for d in documents[:10]]
-    get_client().send_list(member.wa_id, replies.choose_document(), "Choose", rows)
+    client.send_list(member.wa_id, replies.choose_document(), "Choose", rows)
 
 
 def _confirm_delete(member: Member, document: Document):

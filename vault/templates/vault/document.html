@@ -32,6 +32,8 @@
         </div>
       {% elif can_preview %}
         <img src="{% url 'vault:preview' document.pk %}" alt="Preview of {{ document.title }}">
+      {% elif is_word %}
+        <div class="locked"><svg class="icon" style="width:34px;height:34px"><use href="#i-file"/></svg><p>This is a Word file, so there's no preview.<br>Download it to open it.</p></div>
       {% else %}
         <div class="locked"><svg class="icon" style="width:34px;height:34px"><use href="#i-file"/></svg><p>No preview for this kind of file.</p></div>
       {% endif %}

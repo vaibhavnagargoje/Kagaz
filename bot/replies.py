@@ -28,7 +28,8 @@ FILE_WAITING = "📄 I've received your file. I'll save it as soon as you agree.
 def welcome(file_waiting: bool = False) -> str:
     return (
         "👋 Welcome to *Kagaz*: your documents, one message away.\n\n"
-        "Send me any document or photo (marksheets, certificates, offer letters, bills…) and I'll keep it safe. "
+        "Send me any document or photo (marksheets, certificates, offer letters, light bills, rent agreements, "
+        "7/12 extracts…) and I'll keep it safe. "
         "Later just ask: _\"send my 10th marksheet under 100 KB\"_ or _\"what's my 12th roll number?\"_\n\n"
         "🔒 Your files are encrypted with a key unique to you, and an AI reads each one once to name it. "
         "You can delete everything anytime.\n\n"
@@ -73,7 +74,8 @@ def help_text() -> str:
         "*Kagaz* 📄 Just tell me what you need, in your own words:\n\n"
         "• _\"send my 12th marksheet\"_\n"
         "• _\"10th marksheet under 100 KB\"_\n"
-        "• _\"what's my 12th roll number?\"_\n\n"
+        "• _\"what's my 12th roll number?\"_\n"
+        "• _\"my electricity consumer number\"_\n\n"
         "Send any document or photo to save it. Tap *Menu* for everything else.\n\n"
         "🔒 ID cards and bank papers open on a secure page with your PIN."
         + support_line()
@@ -83,8 +85,8 @@ def help_text() -> str:
 def how_to_ask() -> str:
     return (
         "*What you can ask* 💬 (English, Hindi or Hinglish all work)\n\n"
-        "• *Save:* send any document or photo here\n"
-        "• *Get it back:* \"send my 12th marksheet\"\n"
+        "• *Save:* send any document here: a PDF, a photo or a Word .docx file\n"
+        "• *Get it back:* \"send my 12th marksheet\" / \"my light bill\" / \"rent agreement\"\n"
         "• *Shrink it:* \"12th marksheet under 100 KB\"\n"
         "• *Change format:* \"degree as PDF\" / \"certificate as JPG\"\n"
         "• *Photo for forms:* \"my photo 200x230 px under 50 KB\"\n"
@@ -115,8 +117,15 @@ SOMETHING_WENT_WRONG = "Sorry, something went wrong on my side. Please try again
 AI_UNAVAILABLE = "Sorry, I couldn't understand that right now. Try other words, or tap *Menu*."
 AI_BUSY_SEARCHED = "My AI helper is busy right now, so I searched your documents by name."
 VOICE_NOT_YET = "I can't listen to voice notes yet. Please type what you need 🙏"
-UNSUPPORTED = "I can save documents and photos, and send them back when you ask. Type HELP to see how."
+UNSUPPORTED = (
+    "I can save documents: PDFs, photos and Word .docx files, and send them back when you ask. "
+    "Type HELP to see how."
+)
 FILE_TOO_LARGE = f"That file is too big. I can save files up to {MAX_UPLOAD_MB} MB."
+
+
+def upload_limit(limit: int) -> str:
+    return f"You've added {limit} files today, the most for one day. Please send the rest tomorrow 🙏"
 CANCELLED = "Okay, cancelled 👍"
 NOT_FOUND = "I couldn't find that in your Kagaz. Type LIST to see what you've saved."
 WIPE_CONFIRM = (

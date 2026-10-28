@@ -1,4 +1,5 @@
 import zipfile
+from dataclasses import asdict
 from datetime import timedelta
 from io import BytesIO
 from unittest import mock
@@ -12,9 +13,12 @@ from PIL import Image
 from pypdf import PdfWriter
 
 from accounts.models import Member
-from core.llm import LLMError
-from core.testing import KagazTestCase, extraction_result, intent_result, make_jpeg, make_pdf
-from vault import conversions, services
+from core.llm import File, LLMError
+from core.testing import (
+    WORD_NS, KagazTestCase, blank_pdf, extraction_result, intent_result, make_docx, make_heic, make_jpeg, make_pdf,
+    png_header,
+)
+from vault import conversions, services, wordfile
 from vault.conversions import ConversionError, FileData, SendOptions
 from vault.models import Document
 
@@ -172,7 +176,7 @@ class WebChatTests(KagazTestCase):
         ai.assert_not_called()
 
     def test_empty_upload_is_explained(self):
-        self.assertContains(self.client.post(reverse("vault:upload"), {}, headers=FETCH), "choose a PDF or photo")
+        self.assertContains(self.client.post(reverse("vault:upload"), {}, headers=FETCH), "choose a PDF, photo or Word file")
 
     def test_clear_chat_and_lock_now(self):
         self.say("hello there", intent="help")
@@ -311,6 +315,132 @@ class ConversionTests(SimpleTestCase):
         self.assertEqual(prepared.operations, ["to_jpg"])
 
 
+class FileSafetyTests(SimpleTestCase):
+    """Huge or hostile files ("file bombs") are refused or drawn smaller, never decoded in full."""
+
+    def test_huge_photos_are_refused_before_decoding(self):
+        for width, height in ((20000, 20000), (9000, 9000)):
+            with self.assertRaisesMessage(ConversionError, "too big"):
+                conversions.open_image(png_header(width, height))
+
+    def test_only_known_photo_formats_are_opened(self):
+        buffer = BytesIO()
+        Image.new("RGB", (50, 50)).save(buffer, "GIF")
+        with self.assertRaisesMessage(ConversionError, "couldn't open"):
+            conversions.open_image(buffer.getvalue())
+
+    def test_giant_pdf_page_is_drawn_at_a_safe_size(self):
+        giant = blank_pdf(size_pt=14400)  # 5 metres square: 900 megapixels at 150 dpi.
+        pages, total = conversions.pdf_to_jpegs(giant)
+        width, height = Image.open(BytesIO(pages[0])).size
+        self.assertLessEqual(width * height, conversions.MAX_RENDER_PIXELS)
+        self.assertEqual(total, 1)
+        self.assertTrue(conversions.preview_jpeg(giant, conversions.PDF))
+
+    def test_long_pdf_to_jpg_says_pages_were_left_out(self):
+        prepared = conversions.prepare([FileData(blank_pdf(pages=7), conversions.PDF, "long.pdf")], SendOptions(fmt="jpg"))
+        self.assertEqual(len(prepared.files), conversions.MAX_JPG_PAGES)
+        self.assertIn("long.pdf has 7 pages; I sent the first 5", prepared.notes[0])
+
+    def test_merge_has_limits(self):
+        jpeg = FileData(make_jpeg(200, 200), conversions.JPEG, "a.jpg")
+        with self.assertRaisesMessage(ConversionError, "up to 20 files"):
+            conversions.merge_to_pdf([jpeg] * 21)
+        long = FileData(blank_pdf(pages=150), conversions.PDF, "long.pdf")
+        with self.assertRaisesMessage(ConversionError, "more than 200 pages"):
+            conversions.merge_to_pdf([long, long])
+
+    def test_sizes_that_cant_be_made_are_skipped_with_a_note(self):
+        huge = SendOptions(width=10000, height=20000)
+        self.assertEqual((huge.width, huge.height), (0, 0))
+        self.assertFalse(huge.converts)
+        self.assertIn("biggest I can make is 5000 × 5000 px", huge.notes[0])
+        self.assertIn("both the width and the height", SendOptions(width=300).notes[0])
+        self.assertIn("smallest size I can aim for is 5 KB", SendOptions(target_kb=2).notes[0])
+        self.assertEqual(SendOptions(width=200, height=230, target_kb=50).notes, ())
+        again = SendOptions(**asdict(huge))  # As stored in a link or a chat entry.
+        self.assertEqual(again.notes, huge.notes)
+
+    def test_prepare_passes_the_notes_on(self):
+        photo = FileData(make_jpeg(400, 300), conversions.JPEG, "me.jpg")
+        prepared = conversions.prepare([photo], SendOptions(width=10000, height=20000))
+        self.assertEqual(prepared.files, [photo])
+        self.assertEqual(prepared.operations, [])
+        self.assertIn("biggest I can make", prepared.notes[0])
+
+    def test_ai_reads_the_first_pages_and_the_last(self):
+        picked = conversions.pdf_pick_pages(blank_pdf(pages=100), first=5, last=1)
+        self.assertEqual(conversions.pdf_page_count(picked), 6)
+        short = blank_pdf(pages=4)
+        self.assertEqual(conversions.pdf_pick_pages(short, first=5, last=1), short)
+
+    def test_real_type_comes_from_the_bytes(self):
+        self.assertEqual(conversions.detect_mime(make_jpeg(100, 100), fallback="x"), conversions.JPEG)
+        self.assertEqual(conversions.detect_mime(make_heic(), fallback="x"), conversions.HEIC)
+        self.assertEqual(conversions.detect_mime(make_docx(), fallback="x"), conversions.DOCX)
+        plain_zip = BytesIO()
+        with zipfile.ZipFile(plain_zip, "w") as archive:
+            archive.writestr("xl/workbook.xml", "<workbook/>")
+        self.assertEqual(conversions.detect_mime(plain_zip.getvalue(), fallback="x"), "x")
+
+
+class WordFileTests(SimpleTestCase):
+    def test_text_keeps_paragraphs_and_table_rows(self):
+        data = make_docx(paragraphs=["Rent Agreement", "Between Asha and Ravi"], table=[["Rent", "12000"], ["Deposit", "50000"]])
+        self.assertEqual(wordfile.text(data), "Rent Agreement\nBetween Asha and Ravi\nRent | 12000\nDeposit | 50000")
+
+    def test_biggest_pictures_first_and_logos_skipped(self):
+        logo = BytesIO()
+        Image.new("RGB", (40, 40), "navy").save(logo, "JPEG")
+        small_scan, big_scan = make_jpeg(400, 300), make_jpeg(1200, 900)
+        found = wordfile.pictures(make_docx(pictures=[logo.getvalue(), small_scan, big_scan]))
+        self.assertEqual(found, [big_scan, small_scan])
+
+    def test_zip_bomb_is_refused(self):
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            with archive.open("word/document.xml", "w") as part:
+                for _ in range(101):
+                    part.write(bytes(1024 * 1024))  # 101 MB of zeros packs into about 100 KB.
+        self.assertLess(len(buffer.getvalue()), 200 * 1024)
+        with self.assertRaisesMessage(ConversionError, "looks damaged"):
+            wordfile.check(buffer.getvalue())
+
+    def test_too_many_parts_is_refused(self):
+        parts = {f"word/part{n}.xml": "<x/>" for n in range(wordfile.MAX_ENTRIES)}
+        with self.assertRaisesMessage(ConversionError, "looks damaged"):
+            wordfile.check(make_docx(extra_parts=parts))
+
+    def test_macros_are_refused(self):
+        with self.assertRaisesMessage(ConversionError, "macros"):
+            wordfile.check(make_docx(extra_parts={"word/vbaProject.bin": b"macro"}))
+
+    def test_xml_tricks_are_refused(self):
+        trick = (
+            '<?xml version="1.0"?><!DOCTYPE d [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;&a;&a;">]>'
+            f'<w:document {WORD_NS}><w:body><w:p><w:r><w:t>&b;</w:t></w:r></w:p></w:body></w:document>'
+        )
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", trick)
+        with self.assertRaisesMessage(ConversionError, "looks damaged"):
+            wordfile.text(buffer.getvalue())
+
+    def test_word_files_are_sent_as_they_are(self):
+        word = FileData(make_docx(), conversions.DOCX, "Resume.docx")
+        pdf = FileData(make_pdf(), conversions.PDF, "Marks.pdf")
+        prepared = conversions.prepare([word], SendOptions(fmt="pdf", target_kb=50))
+        self.assertEqual(prepared.files, [word])
+        self.assertEqual(prepared.operations, [])
+        self.assertIn("Resume.docx is a Word file, so I sent it as it is", prepared.notes[0])
+        self.assertIn("Save as", prepared.notes[0])
+
+        merged = conversions.prepare([word, pdf], SendOptions(merge=True))
+        self.assertEqual([f.name for f in merged.files], ["Marks.pdf", "Resume.docx"])  # Nothing to merge it with.
+
+
 class DocumentStorageTests(KagazTestCase):
     def save(self, member, data=None, mime="application/pdf", **ai):
         with mock.patch("vault.extraction.structured_call", return_value=extraction_result(**ai)):
@@ -363,6 +493,118 @@ class DocumentStorageTests(KagazTestCase):
         with self.captureOnCommitCallbacks(execute=True):
             services.delete_document(document)
         self.assertFalse(default_storage.exists(name))
+
+
+class FileTypeTests(KagazTestCase):
+    def setUp(self):
+        super().setUp()
+        self.member = self.make_member()
+
+    def save(self, data, mime="", filename="file", **ai):
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result(**ai)) as call:
+            result = services.save_document(self.member, data, mime, filename=filename)
+        return result.document, call
+
+    def test_the_bytes_decide_the_type_not_the_claim(self):
+        document, _ = self.save(make_jpeg(300, 200), "application/pdf")
+        self.assertEqual(document.mime_type, conversions.JPEG)
+        with self.assertRaises(services.RefusedFile):
+            self.save(b"just some text", "image/jpeg", filename="photo.jpg")
+
+    def test_unsupported_files_are_refused_with_a_helpful_message(self):
+        sheet = BytesIO()
+        with zipfile.ZipFile(sheet, "w") as archive:
+            archive.writestr("xl/workbook.xml", "<workbook/>")
+        cases = [
+            (sheet.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "marks.xlsx", "Excel"),
+            (services.OLE_HEADER + bytes(100), "application/msword", "old.doc", "save it as .docx or PDF"),
+            (b"hello", "text/plain", "notes.txt", "Word .docx"),
+        ]
+        for data, mime, filename, expected in cases:
+            with self.subTest(filename), self.assertRaisesMessage(services.RefusedFile, expected):
+                self.save(data, mime, filename=filename)
+        self.assertFalse(Document.objects.exists())
+
+    def test_too_big_files_are_refused_before_saving(self):
+        with self.assertRaisesMessage(services.RefusedFile, "too big"):
+            self.save(png_header(20000, 20000), "image/png")
+        with self.assertRaisesMessage(services.RefusedFile, "201 pages"):
+            self.save(blank_pdf(pages=201), "application/pdf")
+        self.assertFalse(Document.objects.exists())
+
+    def test_a_100_page_pdf_is_saved_and_the_ai_sees_6_pages(self):
+        document, call = self.save(blank_pdf(pages=100), "application/pdf", filename="agreement.pdf")
+        self.assertEqual(document.page_count, 100)
+        sent_pdf, hints = call.call_args.kwargs["parts"]
+        self.assertEqual(conversions.pdf_page_count(sent_pdf.data), 6)
+        self.assertIn("The PDF has 100 pages", hints)
+
+    def test_iphone_photo_is_saved_as_jpeg(self):
+        document, _ = self.save(make_heic(), "image/heic", filename="IMG_0042.HEIC")
+        self.assertEqual(document.mime_type, conversions.JPEG)
+        self.assertEqual(conversions.detect_mime(document.read_file()), conversions.JPEG)
+        self.assertTrue(document.download_name().endswith(".jpg"))
+
+    def test_word_file_is_kept_as_it_is_and_read_as_text_and_pictures(self):
+        original = make_docx(paragraphs=["Leave and Licence Agreement"], table=[["Rent", "12000"]],
+                             pictures=[make_jpeg(900, 700)])
+        document, call = self.save(original, conversions.DOCX, filename="rent.docx", category="agreement")
+        self.assertEqual(document.read_file(), original)
+        self.assertEqual(document.mime_type, conversions.DOCX)
+        self.assertEqual(document.category, "agreement")
+        self.assertTrue(document.download_name().endswith(".docx"))
+
+        text, picture, hints = call.call_args.kwargs["parts"]
+        self.assertIn("Rent | 12000", text)
+        self.assertIsInstance(picture, File)
+        self.assertIn("This is a Word file", hints)
+
+        prepared = services.prepare_files(self.member, [document], SendOptions(fmt="pdf"))
+        self.assertEqual(prepared.files[0].data, original)
+        self.assertIn("Save as", prepared.notes[0])
+
+    def test_word_file_with_macros_is_refused(self):
+        with self.assertRaisesMessage(services.RefusedFile, "macros"):
+            self.save(make_docx(extra_parts={"word/vbaProject.bin": b"x"}), conversions.DOCX)
+
+    def test_a_reading_crash_never_leaves_it_processing(self):
+        with mock.patch("vault.extraction.structured_call", side_effect=RuntimeError("bug")):
+            document = services.save_document(self.member, make_pdf(), "application/pdf").document
+        self.assertEqual(document.status, Document.Status.UNREADABLE)
+
+    def test_new_kinds_of_documents(self):
+        tax, _ = self.save(blank_pdf(pages=1), "application/pdf", category="tax", title="Form 16")
+        id_card, _ = self.save(blank_pdf(pages=2), "application/pdf", category="id_card", title="Ayushman Card")
+        bill, _ = self.save(blank_pdf(pages=3), "application/pdf", category="utility_bill", title="Light Bill", fields=[
+            {"key": "consumer_number", "label": "Consumer number", "value": "170012345678", "sensitive": False},
+        ])
+        business, _ = self.save(blank_pdf(pages=4), "application/pdf", category="business", title="GST Certificate")
+        self.assertTrue(tax.is_sensitive)
+        self.assertTrue(id_card.is_sensitive)
+        self.assertFalse(bill.is_sensitive)
+        self.assertFalse(bill.is_field_protected(bill.get_field("consumer_number")))
+        self.assertTrue(business.is_field_protected({"key": "gstin", "value": "27ABCDE1234F1Z5"}))
+
+    def test_daily_upload_limit(self):
+        limit = self.member.limits()["uploads_per_day"]
+        self.assertTrue(all(self.member.use_upload() for _ in range(limit)))
+        self.assertFalse(self.member.use_upload())
+
+    def test_web_upload_refuses_excel_and_keeps_word(self):
+        self.sign_in(self.member)
+        sheet = BytesIO()
+        with zipfile.ZipFile(sheet, "w") as archive:
+            archive.writestr("xl/workbook.xml", "<workbook/>")
+        upload = SimpleUploadedFile("marks.xlsx", sheet.getvalue(), content_type="application/vnd.ms-excel")
+        answer = self.client.post(reverse("vault:upload"), {"file": upload}, headers=FETCH)
+        self.assertContains(answer, "Excel or PowerPoint")
+
+        upload = SimpleUploadedFile("Resume.docx", make_docx(), content_type="application/octet-stream")
+        with mock.patch("vault.extraction.structured_call", return_value=extraction_result(category="other", title="Resume")):
+            answer = self.client.post(reverse("vault:upload"), {"file": upload}, headers=FETCH)
+        self.assertContains(answer, "DOCX")
+        document = self.member.documents.get()
+        self.assertContains(self.client.get(reverse("vault:document", args=[document.pk])), "This is a Word file")
 
 
 class CardSideTests(KagazTestCase):

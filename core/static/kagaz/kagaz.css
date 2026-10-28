@@ -41,6 +41,7 @@
   --tone-img: #2f7a5b;
   --tone-pair: #1d2b53;
   --tone-file: #687088;
+  --tone-doc: #2b5797;
   --shadow-1: 0 1px .5px rgba(17, 27, 61, .14);
   --shadow-2: 0 10px 30px rgba(17, 27, 61, .16);
   --wallpaper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200' fill='none' stroke='%231d2b53' stroke-opacity='.075' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 18h20l9 9v31H22z M42 18v9h9 M28 36h16 M28 43h16 M28 50h10'/%3E%3Cpath d='M118 20v26a8 8 0 0 1-16 0V17a5.5 5.5 0 0 1 11 0v27a3 3 0 0 1-6 0V21'/%3E%3Ccircle cx='164' cy='44' r='13'/%3E%3Ccircle cx='164' cy='44' r='8'/%3E%3Cpath d='M40 120l14-14 7 7-14 14-9 2z M51 109l7 7'/%3E%3Cpath d='M100 126l7 7 15-17'/%3E%3Cpath d='M160 112l3.5 7 7.7 1.1-5.6 5.4 1.3 7.7-6.9-3.6-6.9 3.6 1.3-7.7-5.6-5.4 7.7-1.1z'/%3E%3Cpath d='M20 168h26 M20 176h18'/%3E%3Crect x='96' y='160' width='34' height='24' rx='3'/%3E%3Cpath d='M96 166l17 10 17-10'/%3E%3Ccircle cx='72' cy='76' r='1.6'/%3E%3Ccircle cx='140' cy='84' r='1.6'/%3E%3Ccircle cx='70' cy='160' r='1.6'/%3E%3Ccircle cx='182' cy='150' r='1.6'/%3E%3C/svg%3E");
@@ -79,6 +80,7 @@
     --tone-img: #6cc39a;
     --tone-pair: #8fa5ff;
     --tone-file: #98a0b6;
+    --tone-doc: #86a8e8;
     --shadow-1: 0 1px .5px rgba(0, 0, 0, .35);
     --shadow-2: 0 12px 34px rgba(0, 0, 0, .45);
     --wallpaper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200' fill='none' stroke='%23ffffff' stroke-opacity='.045' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 18h20l9 9v31H22z M42 18v9h9 M28 36h16 M28 43h16 M28 50h10'/%3E%3Cpath d='M118 20v26a8 8 0 0 1-16 0V17a5.5 5.5 0 0 1 11 0v27a3 3 0 0 1-6 0V21'/%3E%3Ccircle cx='164' cy='44' r='13'/%3E%3Ccircle cx='164' cy='44' r='8'/%3E%3Cpath d='M40 120l14-14 7 7-14 14-9 2z M51 109l7 7'/%3E%3Cpath d='M100 126l7 7 15-17'/%3E%3Cpath d='M160 112l3.5 7 7.7 1.1-5.6 5.4 1.3 7.7-6.9-3.6-6.9 3.6 1.3-7.7-5.6-5.4 7.7-1.1z'/%3E%3Cpath d='M20 168h26 M20 176h18'/%3E%3Crect x='96' y='160' width='34' height='24' rx='3'/%3E%3Cpath d='M96 166l17 10 17-10'/%3E%3Ccircle cx='72' cy='76' r='1.6'/%3E%3Ccircle cx='140' cy='84' r='1.6'/%3E%3Ccircle cx='70' cy='160' r='1.6'/%3E%3Ccircle cx='182' cy='150' r='1.6'/%3E%3C/svg%3E");
@@ -339,6 +341,7 @@ legend { padding: 0; }
 .tone-pdf b { background: var(--tone-pdf); }
 .tone-img b { background: var(--tone-img); }
 .tone-pair b { background: var(--tone-pair); }
+.tone-doc b { background: var(--tone-doc); }
 .doc-badge .lock { position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; padding: 2px; border-radius: 50%; background: var(--primary); color: var(--on-primary); stroke-width: 2.4; }
 .tone-pair { place-items: center; padding-bottom: 0; }
 .doc-badge .pair { width: 22px; height: 22px; color: var(--tone-pair); stroke-width: 2; }

@@ -15,11 +15,13 @@ from core import crypto
 from core.models import TimeStampedModel
 
 # What each plan allows. None means unlimited. Typed questions are the ones the
-# AI has to understand; commands like LIST or HELP don't count.
+# AI has to understand; commands like LIST or HELP don't count. Every file
+# added is read by the AI once, so files a day are limited too (otherwise
+# add -> delete -> add again would never end).
 PLAN_LIMITS = {
-    "free": {"documents": 25, "conversions_per_month": 5, "questions_per_day": 20},
-    "plus": {"documents": None, "conversions_per_month": None, "questions_per_day": 200},
-    "family": {"documents": None, "conversions_per_month": None, "questions_per_day": 200},
+    "free": {"documents": 25, "conversions_per_month": 5, "questions_per_day": 20, "uploads_per_day": 30},
+    "plus": {"documents": None, "conversions_per_month": None, "questions_per_day": 200, "uploads_per_day": 100},
+    "family": {"documents": None, "conversions_per_month": None, "questions_per_day": 200, "uploads_per_day": 100},
 }
 
 PIN_MAX_ATTEMPTS = 5
@@ -148,6 +150,12 @@ class Member(TimeStampedModel):
             cache.decr(self._questions_key())
         except ValueError:
             pass  # The day's counter is already gone.
+
+    def use_upload(self) -> bool:
+        """Count one file added. False once today's limit is used up."""
+        key = f"uploads:{self.pk}:{timezone.localdate():%Y%m%d}"
+        cache.add(key, 0, 60 * 60 * 25)
+        return cache.incr(key) <= self.limits()["uploads_per_day"]
 
     # --- PIN ---
 

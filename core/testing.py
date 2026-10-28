@@ -3,9 +3,12 @@
 import base64
 import io
 import shutil
+import struct
 import tempfile
 import time
 import uuid
+import zipfile
+import zlib
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -35,6 +38,56 @@ def make_pdf(pages=1) -> bytes:
 
     images = [FileData(make_jpeg(text=f"PAGE {n}"), "image/jpeg", f"p{n}.jpg") for n in range(pages)]
     return merge_to_pdf(images)
+
+
+def png_header(width: int, height: int) -> bytes:
+    """A tiny PNG that claims to be width x height (how a "file bomb" looks before decoding)."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"")) + chunk(b"IEND", b"")
+
+
+def blank_pdf(pages=1, size_pt=595) -> bytes:
+    """A PDF of empty square pages (14400 pt is the biggest page a PDF allows: 5 metres)."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=size_pt, height=size_pt)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def make_heic(width=320, height=240) -> bytes:
+    from vault import conversions  # noqa: F401  (registers the HEIC plugin)
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), "teal").save(buffer, "HEIF")
+    return buffer.getvalue()
+
+
+WORD_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def make_docx(paragraphs=("Leave and Licence Agreement",), table=(), pictures=(), extra_parts=None) -> bytes:
+    """A small Word file: paragraphs, one table (rows of cells) and pictures in word/media/."""
+    def run(text):
+        return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+
+    rows = "".join("<w:tr>" + "".join(f"<w:tc>{run(cell)}</w:tc>" for cell in row) + "</w:tr>" for row in table)
+    body = "".join(run(p) for p in paragraphs) + (f"<w:tbl>{rows}</w:tbl>" if rows else "")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        archive.writestr("word/document.xml", f'<?xml version="1.0"?><w:document {WORD_NS}><w:body>{body}</w:body></w:document>')
+        for number, picture in enumerate(pictures, 1):
+            archive.writestr(f"word/media/image{number}.jpeg", picture)
+        for name, data in (extra_parts or {}).items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
 
 
 def extraction_result(**overrides) -> dict:

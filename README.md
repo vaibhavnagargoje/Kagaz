@@ -8,8 +8,15 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap and monetization.
 
 ## What the MVP does
 
-- **Save:** any PDF or photo is encrypted and stored. AI reads it once to give it a name and pull out
-  details (roll no., certificate no., policy no.…).
+- **Save:** a PDF (up to 200 pages), a photo (JPG, PNG, WEBP; iPhone HEIC is saved as JPG) or a Word
+  .docx file is encrypted and stored. AI reads it once to give it a name and pull out details (roll no.,
+  certificate no., consumer no., survey no.…). It sees the first 5 pages and the last page of a long PDF,
+  and the text plus up to 3 pictures of a Word file. Word files are always sent back unchanged; old
+  .doc, Excel and PowerPoint files are refused with a "save it as PDF" reply.
+- **File safety:** the real type comes from the file's bytes, not its name. Photos over 60 megapixels,
+  giant PDF pages, zip bombs, XML tricks and macro Word files are refused or drawn smaller before
+  anything is fully decoded. Each process runs at most 2 heavy conversions at once, and each member can
+  add 30 files a day (100 on Plus), because every file costs one AI read.
 - **Find:** plain-language requests in English, Hindi or Hinglish. If several documents match, the bot
   shows a pick list. If the AI is down or out of quota, it still finds documents by name.
 - **Answer details:** "what's my 12th roll number?" → the number **plus the document**, to double-check.

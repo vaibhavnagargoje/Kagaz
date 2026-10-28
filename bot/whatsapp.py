@@ -140,15 +140,20 @@ class CloudClient:
         info = self._request("GET", media_id)
         if int(info.get("file_size") or 0) > _max_upload_bytes():
             raise FileTooLarge()
+        chunks, size = [], 0
         try:
             # The download URL expires within minutes and needs the same bearer token.
-            response = self.session.get(info["url"], timeout=120)
-            response.raise_for_status()
+            # Read it bit by bit, stopping at our limit whatever size Meta said.
+            with self.session.get(info["url"], timeout=120, stream=True) as response:
+                response.raise_for_status()
+                for chunk in response.iter_content(64 * 1024):
+                    size += len(chunk)
+                    if size > _max_upload_bytes():
+                        raise FileTooLarge()
+                    chunks.append(chunk)
         except (requests.RequestException, KeyError) as exc:
             raise WhatsAppError(f"Media download failed for {media_id}") from exc
-        if len(response.content) > _max_upload_bytes():
-            raise FileTooLarge()
-        return response.content, info.get("mime_type", "application/octet-stream")
+        return b"".join(chunks), info.get("mime_type", "application/octet-stream")
 
     def upload_media(self, data: bytes, mime: str, filename: str) -> str:
         result = self._request(

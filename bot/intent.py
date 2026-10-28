@@ -162,14 +162,6 @@ def mentions_delete(text: str) -> bool:
     return bool(DELETE_WORDS & set(re.findall(r"[a-z]+", text.lower())))
 
 
-def _bounded(value, low: int, high: int) -> int:
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return value if low <= value <= high else 0
-
-
 def parse(text: str, documents: list[Document]) -> Intent:
     documents = documents[:MAX_CATALOG]
     by_ref = {ref: doc for ref, doc in enumerate(documents, 1)}
@@ -187,14 +179,13 @@ def parse(text: str, documents: list[Document]) -> Intent:
         if doc and doc not in picked:
             picked.append(doc)
 
-    width = _bounded(result.get("width_px"), 16, 5000)
-    height = _bounded(result.get("height_px"), 16, 5000)
+    # SendOptions keeps sizes within what can be made, and notes what it had to skip.
     options = SendOptions(
-        target_kb=_bounded(result.get("target_kb"), 5, 100_000),
-        fmt=result.get("output_format") if result.get("output_format") in ("pdf", "jpg") else "original",
-        width=width if height else 0,
-        height=height if width else 0,
-        merge=bool(result.get("merge_into_one_pdf")),
+        target_kb=result.get("target_kb"),
+        fmt=result.get("output_format"),
+        width=result.get("width_px"),
+        height=result.get("height_px"),
+        merge=result.get("merge_into_one_pdf"),
     )
     return Intent(
         action=action,
