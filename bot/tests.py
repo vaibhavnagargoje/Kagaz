@@ -369,7 +369,7 @@ class ConversationTests(KagazTestCase):
         self.receive_text(member.wa_id, "save20")
         member.refresh_from_db()
         self.assertEqual(member.pending_promo_code, "SAVE20")
-        self.assertIn("Code *SAVE20* applied", self.last_text())
+        self.assertIn("Code *SAVE20* applied", self.sent("buttons")[-1]["body"])
 
     def test_off_topic_message_gets_polite_reply(self):
         member = self.make_member()

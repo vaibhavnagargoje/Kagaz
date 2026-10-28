@@ -106,12 +106,22 @@ def apply_code(member, code: str) -> PromoCode:
 
 def code_kind(code: str) -> str:
     """"promo" or "referral" when someone types just a code ("SAVE20"), else ""."""
-    code = "".join(code.split()).upper()
-    if PromoCode.objects.filter(code=code).exists():
-        return "promo"
-    if Member.objects.filter(referral_code=code).exists():
-        return "referral"
-    return ""
+    return find_code([code])[0]
+
+
+def find_code(words: list[str]) -> tuple[str, str]:
+    """The first real code among these words, as ("promo" or "referral", CODE), else ("", "")."""
+    codes = ["".join(word.split()).upper() for word in words]
+    if not codes:
+        return "", ""
+    promos = set(PromoCode.objects.filter(code__in=codes).values_list("code", flat=True))
+    referrals = set(Member.objects.filter(referral_code__in=codes).values_list("referral_code", flat=True))
+    for code in codes:
+        if code in promos:
+            return "promo", code
+        if code in referrals:
+            return "referral", code
+    return "", ""
 
 
 def pending_promo(member) -> PromoCode | None:

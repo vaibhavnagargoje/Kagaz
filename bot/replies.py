@@ -231,8 +231,11 @@ def code_applied(promo) -> str:
     only = ", ".join(p.name for p in promo.products.all())
     return (
         f"🎟️ Code *{promo.code}* applied: {off}{f' on {only}' if only else ''}. "
-        "It's kept for your next purchase for 24 hours. Type *PLUS* to see your price."
+        "It's kept for your next purchase for 24 hours."
     )
+
+
+CODE_HOW = "I couldn't find a code in your message. Send it like this: *CODE SAVE20*"
 
 
 def plan_summary(member) -> str:

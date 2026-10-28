@@ -145,7 +145,35 @@ def match(text: str) -> Command | None:
     return Command(hits.pop()) if len(hits) == 1 else None
 
 
-def lone_code(text: str) -> str:
-    """A single word that could be a promo or invite code ("SAVE20"), else ""."""
-    plain = clean(text)
-    return plain if re.fullmatch(r"[a-z0-9_-]{4,32}", plain) else ""
+# Words that say a message carries a discount code. Plain "code" is too common
+# ("IFSC code", "pin code") to mean that on its own.
+COUPON_WORDS = {"coupon", "coupons", "coupen", "cupon", "coupan", "copun", "copon", "promo", "promocode", "voucher"}
+APPLY_WORDS = {"apply", "use", "redeem", "lagao", "lagana", "laga", "dalo", "daalo"}
+
+
+def code_candidates(text: str) -> tuple[list[str], bool]:
+    """Words that could be a promo or invite code, and whether the message is surely about a code.
+
+    A word mixing letters and digits ("SAVE20") is tried in any message. Other
+    words are tried when the message is that one word, or mentions a code
+    ("apply code diwali", "coupen DIWALI").
+    """
+    words = re.findall(r"[A-Za-z0-9_-]+", text)
+    lower = [word.lower() for word in words]
+    coupon = any(word in COUPON_WORDS or similar(word, "coupon") for word in lower)
+    sure = coupon or ("code" in lower and bool(APPLY_WORDS & set(lower)))
+    any_word = sure or "code" in lower or len(words) == 1
+    skip = COUPON_WORDS | APPLY_WORDS | FILLER | {"code", "codes", "promo-code"}
+    found = []
+    for word, low in zip(words, lower):
+        if not 4 <= len(word) <= 32 or low in skip or similar(low, "coupon"):
+            continue
+        mixed = bool(re.search(r"[a-z]", low) and re.search(r"\d", low))
+        if mixed or any_word:
+            found.append(word)
+    return found[:10], sure
+
+
+def likely_code(candidates: list[str]) -> str:
+    """The word most likely meant as a code (it has digits or is in capitals), else ""."""
+    return next((w for w in candidates if re.search(r"\d", w) or (w.isupper() and len(w) >= 4)), "")

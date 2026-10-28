@@ -208,15 +208,24 @@ def _handle_text(member: Member, text: str):
 
 
 def command_for(text: str) -> commands.Command | None:
-    """What a typed message asks Kagaz to do, if it's a command (or a code typed on its own)."""
-    command = commands.match(text)
-    if command is None and (code := commands.lone_code(text)):
-        kind = billing.code_kind(code)
-        if kind == "promo":
-            command = commands.Command("code", code)
-        elif kind == "referral":
-            command = commands.Command("friend_code", f"ref {code}")
-    return command
+    """What a typed message asks Kagaz to do, if it's a command or carries a code."""
+    return commands.match(text) or _code_command(text)
+
+
+def _code_command(text: str) -> commands.Command | None:
+    """A discount or friend's code anywhere in a message ("I want Plus, my coupon is SAVE20").
+
+    Found without the AI, so codes work even when it's down or today's questions are used up.
+    """
+    candidates, sure = commands.code_candidates(text)
+    kind, code = billing.find_code(candidates)
+    if kind == "promo":
+        return commands.Command("code", code)
+    if kind == "referral":
+        return commands.Command("friend_code", f"ref {code}")
+    if sure:  # Clearly about a code, but not one we know: say so rather than guess.
+        return commands.Command("code", commands.likely_code(candidates))
+    return None
 
 
 def send_menu(member: Member, body: str):
@@ -266,9 +275,6 @@ def run_command(member: Member, command: commands.Command):
 def _understand(member: Member, text: str):
     client = get_client()
     documents = list(member.documents.exclude(status=Document.Status.PROCESSING)[: intent.MAX_CATALOG])
-    if not documents:
-        client.send_text(member.wa_id, replies.EMPTY_VAULT)
-        return
     if not member.use_question():
         _fallback_search(member, text, documents, over_limit=True)
         return
@@ -278,6 +284,10 @@ def _understand(member: Member, text: str):
         member.refund_question()
         logger.warning("Could not understand a message from member %s: %s", member.pk, exc)
         _fallback_search(member, text, documents)
+        return
+    if not documents and parsed.action in ("send_document", "ask_field", "delete_document"):
+        # Still asked the AI: with nothing saved yet, "I want Plus" or "how does it work" can be answered.
+        client.send_text(member.wa_id, replies.EMPTY_VAULT)
         return
     _run_intent(member, parsed)
 
@@ -634,20 +644,19 @@ def _send_web_link(member: Member):
 # --- Plans and payments -----------------------------------------------------
 
 
-def _offer_plus(member: Member):
+def _offer_plus(member: Member, note: str = ""):
+    """The plans with this member's prices. `note` replaces the usual line about a discount."""
     client = get_client()
     products = billing.products_for(member)
     if not products:
-        client.send_text(member.wa_id, replies.PLANS_UNAVAILABLE)
+        client.send_text(member.wa_id, f"{note}\n\n{replies.PLANS_UNAVAILABLE}" if note else replies.PLANS_UNAVAILABLE)
         return
     offers = [billing.quote(member, product) for product in products]
     promo = next((o.promo for o in offers if o.promo), None)
-    if promo:
+    if not note and promo:
         note = replies.promo_note(promo)
-    elif any(o.referral for o in offers):
+    elif not note and any(o.referral for o in offers):
         note = replies.friend_note(billing.friend_discount_percent(member))
-    else:
-        note = ""
     buttons = [(f"buy:{o.product.code}", f"{o.product.button_label} ₹{o.amount}") for o in offers]
     client.send_buttons(member.wa_id, replies.plus_offer(member, note), buttons)
 
@@ -672,6 +681,9 @@ def _buy(member: Member, code: str):
 
 
 def _apply_code(member: Member, code: str):
+    if not code:
+        get_client().send_text(member.wa_id, replies.CODE_HOW)
+        return
     if Member.objects.filter(referral_code=code.upper()).exists():
         _add_friend_code(member, f"ref {code}")  # They typed "CODE K7M2QX" with a friend's code.
         return
@@ -680,7 +692,7 @@ def _apply_code(member: Member, code: str):
     except billing.PromoError as exc:
         get_client().send_text(member.wa_id, str(exc))
         return
-    get_client().send_text(member.wa_id, replies.code_applied(promo))
+    _offer_plus(member, note=replies.code_applied(promo))  # The new prices right away.
 
 
 def _send_invite(member: Member):

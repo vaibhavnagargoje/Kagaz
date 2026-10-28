@@ -249,7 +249,9 @@ class PromoCodeTests(BillingTestCase):
     def test_percent_code_with_a_cap(self):
         self.promo(value=50, max_discount=100)
         self.receive_text(self.member.wa_id, "CODE save20")
-        self.assertIn("applied", self.last_text())
+        offer = self.sent("buttons")[-1]
+        self.assertIn("Code *SAVE20* applied: 50% off (up to ₹100)", offer["body"])  # With the new prices.
+        self.assertIn("₹299", str(offer["buttons"]))
         self.member.refresh_from_db()
         self.assertEqual(services.quote(self.member, self.year).amount, 299)  # 50% is 199, capped at 100.
         self.assertEqual(services.quote(self.member, self.month).amount, 25)
@@ -272,6 +274,41 @@ class PromoCodeTests(BillingTestCase):
         self.assertIn("isn't active", self.last_text())
         self.receive_text(self.member.wa_id, "code NOPE")
         self.assertIn("couldn't find", self.last_text())
+
+    def test_code_inside_a_sentence(self):
+        self.promo()
+        for text in (
+            "i want to buy plus, i have code SAVE20",
+            "apply coupen code save20",  # Misspelt, in small letters.
+            "Mere paas promo code hai SAVE20 plus chahiye",
+        ):
+            Member.objects.filter(pk=self.member.pk).update(pending_promo_code="")
+            with self.subTest(text), mock.patch("bot.intent.structured_call") as ai:
+                self.receive_text(self.member.wa_id, text)
+            ai.assert_not_called()  # Works even when the AI is down or out of questions.
+            self.member.refresh_from_db()
+            self.assertEqual(self.member.pending_promo_code, "SAVE20")
+            self.assertIn("Code *SAVE20* applied", self.sent("buttons")[-1]["body"])
+
+    def test_unknown_code_in_a_sentence_is_named(self):
+        self.receive_text(self.member.wa_id, "please apply my coupon SAVE99")
+        self.assertIn("couldn't find the code SAVE99", self.last_text())
+        self.receive_text(self.member.wa_id, "do you have a coupon for me")
+        self.assertEqual(self.last_text(), replies.CODE_HOW)
+
+    def test_other_codes_are_left_to_the_ai(self):
+        self.promo()
+        with mock.patch("bot.intent.structured_call", return_value=intent_result(intent="ask_field", refs=[])) as ai:
+            self.receive_text(self.member.wa_id, "what is my ifsc code")
+        ai.assert_called_once()
+
+    def test_new_member_can_ask_to_buy_in_plain_words(self):
+        with mock.patch("bot.intent.structured_call", return_value=intent_result(intent="upgrade", refs=[])):
+            self.receive_text(self.member.wa_id, "mujhe kagaz plus lena hai, kaise kare")
+        self.assertIn("Kagaz Plus", self.sent("buttons")[-1]["body"])  # Not "Your Kagaz is empty".
+        with mock.patch("bot.intent.structured_call", return_value=intent_result(intent="send_document", refs=[])):
+            self.receive_text(self.member.wa_id, "send my marksheet")
+        self.assertEqual(self.last_text(), replies.EMPTY_VAULT)
 
     def test_first_n_uses_count_open_payments(self):
         self.promo(max_uses=1)
